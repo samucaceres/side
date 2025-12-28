@@ -1,3 +1,64 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /itsin/api
+
 spring:
   application:
-    name: side
+    name: side-itsin
+
+  # Configuración de Base de Datos
+  datasource:
+    #url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://192.167.42.91:5432/itsin?currentSchema=edoc,public}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/itsin?currentSchema=edoc,public}
+    username: ${SPRING_DATASOURCE_USERNAME:postgres}
+    #password: ${SPRING_DATASOURCE_PASSWORD:Alm@9999}
+    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    driver-class-name: org.postgresql.Driver
+
+  # Configuración de JPA / Hibernate
+  jpa:
+    open-in-view: false
+    show-sql: false
+    hibernate:
+      ddl-auto: none
+    properties:
+      hibernate:
+        physical_naming_strategy: org.hibernate.boot.model.naming.PhysicalNamingStrategyStandardImpl
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        jdbc:
+          lob:
+            non_contextual_creation: true
+
+  # Configuración de Correo
+  mail:
+    host: smtp.gmail.com
+    port: 587
+    username: ${MAIL_USERNAME:soportegestionutic@gmail.com}
+    password: ${MAIL_PASSWORD:hkaxmarzfxnehiwd}
+    properties:
+      mail:
+        smtp:
+          auth: true
+          starttls:
+            enable: true
+            required: true
+          connectiontimeout: 5000
+          timeout: 5000
+          writetimeout: 5000
+
+# Configuraciones personalizadas de la aplicación
+app:
+  edoc:
+    config-dir: ${APP_EDOC_CONFIG_DIR:./config/edoc}
+  
+  # Nueva sección para Sifen (Certificados y Ambiente)
+  sifen:
+    # Ruta COMPLETA al archivo PFX. En Docker apuntará al volumen montado.
+    certificado-path: ${SIFEN_CERT_PATH:./config/edoc/80156217-1.pfx}
+    certificado-pass: ${SIFEN_CERT_PASS:sinfronteras196}
+    ambiente: ${SIFEN_AMBIENTE:DEV} # Valores: DEV o PROD
+    # Configuración CSC (Solo necesaria para PROD, valores por defecto de prueba)
+    id-csc: ${SIFEN_ID_CSC:001}
+    csc: ${SIFEN_CSC:315f5945ad9185ED2479BEC8b7D7bdc9}
