@@ -54,7 +54,7 @@ public class ImpresionServiceImpl implements ImpresionService {
     private static final Font FONT_DATA = FontFactory.getFont(FontFactory.COURIER, 8);
 
     @Override
-    public byte[] generarFacturaPdf(String idDocumento) throws Exception {
+    public byte[] generarFacturaPdf(String idDocumento, String tipoDocumento) throws Exception {
         
         // 1. Recuperar datos de BD
         String[] parts = idDocumento.split("-");
@@ -62,7 +62,7 @@ public class ImpresionServiceImpl implements ImpresionService {
                 Integer.parseInt(parts[0]), Integer.parseInt(parts[1]),
                 Integer.parseInt(parts[2]), Integer.parseInt(parts[3]),
                 Integer.parseInt(parts[4])
-        ).orElseThrow(() -> new Exception("Cobro no encontrado"));
+        ).orElseThrow(() -> new Exception("Documento no encontrado"));
 
         List<DetalleCobro> detalles = detalleCobroRepository.findByCompositeId(
                 cobro.getNroCobro(), cobro.getIdSede(), cobro.getIdCaja(),

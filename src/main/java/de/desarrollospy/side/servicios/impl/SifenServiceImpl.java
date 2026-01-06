@@ -21,6 +21,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+
+import de.desarrollospy.side.dto.DocumentoStatusDTO;
 import de.desarrollospy.side.exception.AppException;
 import de.desarrollospy.side.modelo.Cobro;
 import de.desarrollospy.side.modelo.DetalleCobro;
@@ -116,9 +118,6 @@ public class SifenServiceImpl implements SifenService {
             if (eDocOpt.isPresent()) {
                 eDoc = eDocOpt.get();
                 if ("APROBADO SET".equalsIgnoreCase(eDoc.getEstado())) {
-                    if (eDoc.getXml() != null) {
-                        return new String(Base64.getDecoder().decode(eDoc.getXml()));
-                    }
                     return "El documento ya fue APROBADO por la SET. CDC: " + eDoc.getCdc();
                 }
             } else {
@@ -673,5 +672,26 @@ public class SifenServiceImpl implements SifenService {
             e.printStackTrace();
             throw new AppException(HttpStatus.INTERNAL_SERVER_ERROR, "Error interno al cancelar: " + e.getMessage());
         }
+    }
+    
+    @Override
+    public DocumentoStatusDTO consultarEstadoDocumento(String idDocumentoOriginal, String tipoDocumento) {
+        
+        // 1. Buscar el EDoc filtrando por ID y TIPO
+        Optional<EDoc> docs = eDocRepository.findByIdDocumentoOriginalAndTipoDocumento(idDocumentoOriginal, tipoDocumento);
+        
+        if (!docs.isPresent()) {
+            throw new AppException(HttpStatus.NOT_FOUND, 
+                "No se encontró el documento: " + idDocumentoOriginal + " (" + tipoDocumento + ")");
+        }
+
+        // Tomamos el primero (o el más reciente si ordenas por ID desc en el repo)
+        EDoc edoc = docs.get();
+
+        // 2. Buscar los errores asociados también filtrando por TIPO
+        List<ErroresDocumento> errores = erroresDocumentoRepository.findByIdDocumentoOriginalAndTipoDocumento(idDocumentoOriginal, tipoDocumento);
+
+        // 3. Retornar el DTO compuesto
+        return new DocumentoStatusDTO(edoc, errores);
     }
 }

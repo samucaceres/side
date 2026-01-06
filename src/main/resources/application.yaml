@@ -10,10 +10,10 @@ spring:
   # Configuración de Base de Datos
   datasource:
     #url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://192.167.42.91:5432/itsin?currentSchema=edoc,public}
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/itsin?currentSchema=edoc,public}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5440/itsin?currentSchema=edoc,public}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
     #password: ${SPRING_DATASOURCE_PASSWORD:Alm@9999}
-    password: ${SPRING_DATASOURCE_PASSWORD:postgres}
+    password: ${SPRING_DATASOURCE_PASSWORD:123}
     driver-class-name: org.postgresql.Driver
 
   # Configuración de JPA / Hibernate

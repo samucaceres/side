@@ -18,6 +18,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import de.desarrollospy.side.dto.CancelacionRequest;
+import de.desarrollospy.side.dto.DocumentoStatusDTO;
 import de.desarrollospy.side.exception.AppException;
 import de.desarrollospy.side.servicios.ImpresionService;
 import de.desarrollospy.side.servicios.SifenService;
@@ -80,11 +81,11 @@ public class EDocController {
         }
     }
     
-    @GetMapping("/imprimir/{idDocumento}")
-    public ResponseEntity<?> imprimirDocumento(@PathVariable("idDocumento") String idDocumento) {
+    @GetMapping("/imprimir/{idDocumento}/{tipoDocumento}")
+    public ResponseEntity<?> imprimirDocumento(@PathVariable("idDocumento") String idDocumento,@PathVariable("tipoDocumento") String tipoDocumento) {
         try {
             // Generar los bytes del PDF usando el servicio OpenPDF
-            byte[] pdfBytes = impresionService.generarFacturaPdf(idDocumento);
+            byte[] pdfBytes = impresionService.generarFacturaPdf(idDocumento, tipoDocumento);
 
             // Configurar encabezados HTTP para PDF
             HttpHeaders headers = new HttpHeaders();
@@ -101,6 +102,20 @@ public class EDocController {
             e.printStackTrace();
             return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                     .body(Map.of("error", "Error al generar el PDF: " + e.getMessage()));
+        }
+    }
+    
+    @GetMapping("/ver-estado/{idDocumento}/{tipoDocumento}")
+    public ResponseEntity<?> verEstadoDocumento(@PathVariable("idDocumento") String idDocumento,@PathVariable("tipoDocumento") String tipoDocumento) {
+        try {
+            DocumentoStatusDTO status = sifenService.consultarEstadoDocumento(idDocumento,tipoDocumento);
+            return ResponseEntity.ok(status);
+        } catch (AppException e) {
+            return ResponseEntity.status(e.getStatus()).body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            e.printStackTrace();
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(Map.of("error", "Error interno al consultar estado: " + e.getMessage()));
         }
     }
 }

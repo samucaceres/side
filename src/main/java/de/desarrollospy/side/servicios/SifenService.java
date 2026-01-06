@@ -2,6 +2,8 @@ package de.desarrollospy.side.servicios;
 
 import com.roshka.sifen.core.beans.response.RespuestaConsultaRUC;
 
+import de.desarrollospy.side.dto.DocumentoStatusDTO;
+
 public interface SifenService {
     
     /**
@@ -20,4 +22,6 @@ public interface SifenService {
     String procesarDocumento(String idDocumento, String tipoDocumento);
     
     String enviarCancelacion(String idDocumento, String tipoDocumento, String motivo);
+    
+    DocumentoStatusDTO consultarEstadoDocumento(String idDocumentoOriginal,String tipoDocumento);
 }

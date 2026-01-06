@@ -20,4 +20,6 @@ public interface EDocRepository extends JpaRepository<EDoc, Long> {
  // Query para obtener los Nro de Lote distintos pendientes de verificación
     @Query("SELECT DISTINCT e.nroLote FROM EDoc e WHERE e.estado = 'ENVIADO SET' AND e.nroLote IS NOT NULL")
     List<String> findLotesPendientes();
+    
+    List<EDoc> findByIdDocumentoOriginal(String idDocumentoOriginal);
 }
