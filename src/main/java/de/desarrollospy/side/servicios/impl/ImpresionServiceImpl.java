@@ -36,6 +36,11 @@ import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 
+import de.desarrollospy.side.modelo.NotaCredito;
+import de.desarrollospy.side.modelo.NotaCreditoDetalle;
+import de.desarrollospy.side.repository.NotaCreditoRepository;
+import de.desarrollospy.side.repository.NotaCreditoDetalleRepository;
+
 @Service
 public class ImpresionServiceImpl implements ImpresionService {
 
@@ -45,6 +50,11 @@ public class ImpresionServiceImpl implements ImpresionService {
     private CobroRepository cobroRepository;
     @Autowired
     private DetalleCobroRepository detalleCobroRepository;
+    
+    @Autowired
+    private NotaCreditoRepository notaCreditoRepository;
+    @Autowired
+    private NotaCreditoDetalleRepository notaCreditoDetalleRepository;
 
     // Fuentes
     private static final Font FONT_BOLD_BIG = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 10);
@@ -56,52 +66,52 @@ public class ImpresionServiceImpl implements ImpresionService {
     @Override
     public byte[] generarFacturaPdf(String idDocumento, String tipoDocumento) throws Exception {
         
-        // 1. Recuperar datos de BD
-        String[] parts = idDocumento.split("-");
-        Cobro cobro = cobroRepository.findByCompositeId(
-                Integer.parseInt(parts[0]), Integer.parseInt(parts[1]),
-                Integer.parseInt(parts[2]), Integer.parseInt(parts[3]),
-                Integer.parseInt(parts[4])
-        ).orElseThrow(() -> new Exception("Documento no encontrado"));
+        EDoc eDoc = eDocRepository.findByIdDocumentoOriginalAndTipoDocumento(idDocumento, tipoDocumento)
+                .orElseThrow(() -> new Exception("Registro electrónico no encontrado para este documento"));
 
-        List<DetalleCobro> detalles = detalleCobroRepository.findByCompositeId(
-                cobro.getNroCobro(), cobro.getIdSede(), cobro.getIdCaja(),
-                cobro.getNroApecie(), cobro.getIdFuncio()
-        );
-
-        EDoc eDoc = eDocRepository.findByIdDocumentoOriginalAndTipoDocumento(idDocumento, "FE")
-                .orElseThrow(() -> new Exception("EDoc no encontrado"));
-
-        // 2. PARSEO ROBUSTO DEL XML (Corrección aquí)
-        // Parseamos el XML completo en un Documento DOM
+        // PARSEO DEL XML (Lógica robusta que ya implementaste)
         org.w3c.dom.Document xmlDoc = getDomDocument(eDoc.getXml());
-        
-        // Mapeamos el objeto principal (Datos factura)
         DocumentoElectronico de = parsearObjetoDE(xmlDoc);
-        
-        // Extraemos manualmente el CDC y el QR porque SifenObjectFactory a veces falla con SOAP envelopes
         String cdcReal = extraerValorAtributo(xmlDoc, "DE", "Id");
         String qrReal = extraerValorEtiqueta(xmlDoc, "dCarQR");
-        
-        // Inyectamos el CDC recuperado al objeto para que no sea null
-        if(cdcReal != null && !cdcReal.isEmpty()) {
-            de.setId(cdcReal); 
-        }
+        if(cdcReal != null) de.setId(cdcReal);
 
-        // 3. Generación del PDF
+        // GENERACIÓN PDF
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         Document document = new Document(PageSize.A4);
         document.setMargins(20, 20, 20, 20);
         PdfWriter writer = PdfWriter.getInstance(document, out);
-
         document.open();
 
-        agregarCabecera(document, de);
-        agregarDatosCliente(document, de);
-        agregarDetallesTabla(document, detalles);
-        agregarTotales(document, cobro, de);
+        // 1. Cabecera (Sede y Empresa)
+        agregarCabecera(document, de, tipoDocumento);
+
+        // 2. Datos del Receptor y específico para NC
+        if ("NC".equalsIgnoreCase(tipoDocumento)) {
+            NotaCredito nc = notaCreditoRepository.findById(idDocumento)
+                    .orElseThrow(() -> new Exception("Datos de Nota de Crédito no encontrados"));
+            List<NotaCreditoDetalle> detallesNC = notaCreditoDetalleRepository.findByNotaCreditoId(nc.getId());
+            
+            agregarDatosCliente(document, de, false);
+            agregarDatosDocumentoAsociado(document, detallesNC.get(0)); // Usamos el primer item para ver la factura asociada
+            agregarDetallesTablaNC(document, detallesNC);
+            agregarTotalesGenerales(document, nc.getTotal(), de);
+        } else {
+            // Lógica para FE (Cobros)
+            String[] parts = idDocumento.split("-");
+            Cobro cobro = cobroRepository.findByCompositeId(
+                    Integer.parseInt(parts[0]), Integer.parseInt(parts[1]),
+                    Integer.parseInt(parts[2]), Integer.parseInt(parts[3]),
+                    Integer.parseInt(parts[4])).orElseThrow(() -> new Exception("Documento no encontrado"));
+            List<DetalleCobro> detallesCobro = detalleCobroRepository.findByCompositeId(
+                    cobro.getNroCobro(), cobro.getIdSede(), cobro.getIdCaja(),
+                    cobro.getNroApecie(), cobro.getIdFuncio());
+
+            agregarDatosCliente(document, de, true);
+            agregarDetallesTabla(document, detallesCobro);
+            agregarTotalesGenerales(document, cobro.getTotal(), de);
+        }
         
-        // Pasamos el QR real explícitamente
         agregarPiePagina(document, de, qrReal);
 
         document.close();
@@ -109,6 +119,128 @@ public class ImpresionServiceImpl implements ImpresionService {
     }
 
     // --- MÉTODOS DE PARSEO MANUAL (SOLUCIÓN AL ERROR) ---
+    
+    private void agregarDatosDocumentoAsociado(Document doc, NotaCreditoDetalle det) throws DocumentException {
+        PdfPTable table = new PdfPTable(1);
+        table.setWidthPercentage(100);
+        PdfPCell cell = new PdfPCell();
+        cell.setBorder(Rectangle.BOX);
+        cell.setPadding(5);
+        cell.setBackgroundColor(new Color(240, 240, 240));
+
+        Paragraph p = new Paragraph();
+        p.add(new Chunk("DOCUMENTO ASOCIADO: ", FONT_BOLD));
+        String cdcRaw = det.getCdcFactura() != null ? det.getCdcFactura() : "";
+        String cdcFormateado = formatearCDC(cdcRaw);
+        String infoAso = String.format("Factura N° %s - CDC: %s", det.getNroFactura(), cdcFormateado);
+        p.add(new Chunk(infoAso, FONT_DATA));
+        
+        Paragraph p2 = new Paragraph();
+        p2.add(new Chunk("MOTIVO: ", FONT_BOLD));
+        String motAso = String.format("%s", det.getMotivo());
+        p2.add(new Chunk(motAso, FONT_DATA));
+        
+        cell.addElement(p);
+        cell.addElement(p2);
+        table.addCell(cell);
+        doc.add(table);
+        doc.add(Chunk.NEWLINE);
+    }
+
+    private void agregarDetallesTablaNC(Document doc, List<NotaCreditoDetalle> detalles) throws DocumentException {
+        float[] columnWidths = {1f, 5f, 1.5f, 1.5f, 1.5f, 1.5f};
+        PdfPTable table = new PdfPTable(columnWidths);
+        table.setWidthPercentage(100);
+        table.setHeaderRows(1);
+
+        String[] headers = {"CANT", "DESCRIPCION", "PRECIO", "EXENTAS", "5%", "10%"};
+        for (String h : headers) {
+            PdfPCell c = new PdfPCell(new Phrase(h, FONT_BOLD));
+            c.setHorizontalAlignment(Element.ALIGN_CENTER);
+            c.setBackgroundColor(Color.LIGHT_GRAY);
+            table.addCell(c);
+        }
+
+        DecimalFormat df = getDecimalFormatter();
+        double subExenta = 0, sub5 = 0, sub10 = 0;
+
+        for (NotaCreditoDetalle det : detalles) {
+            addCellData(table, String.valueOf(det.getCantidad()), Element.ALIGN_CENTER);
+            addCellData(table, det.getDescriCta() != null ? det.getDescriCta() : det.getDetProSer(), Element.ALIGN_LEFT);
+            addCellData(table, df.format(det.getMonto()), Element.ALIGN_RIGHT);
+
+            if (det.getExenta() > 0) {
+                addCellData(table, df.format(det.getExenta()), Element.ALIGN_RIGHT);
+                addCellData(table, "", Element.ALIGN_RIGHT);
+                addCellData(table, "", Element.ALIGN_RIGHT);
+                subExenta += det.getExenta();
+            } else if (det.getGravada5() > 0) {
+                addCellData(table, "", Element.ALIGN_RIGHT);
+                addCellData(table, df.format(det.getGravada5()), Element.ALIGN_RIGHT);
+                addCellData(table, "", Element.ALIGN_RIGHT);
+                sub5 += det.getGravada5();
+            } else {
+                addCellData(table, "", Element.ALIGN_RIGHT);
+                addCellData(table, "", Element.ALIGN_RIGHT);
+                addCellData(table, df.format(det.getGravada10()), Element.ALIGN_RIGHT);
+                sub10 += det.getGravada10();
+            }
+        }
+
+        // Totales de la tabla (Sigue el mismo formato de agregarDetallesTabla que ya tienes)
+        addFooterTotal(table, "SUBTOTAL:", df.format(subExenta), df.format(sub5), df.format(sub10));
+        addFooterTotalFinal(table, "TOTAL NOTA DE CRÉDITO:", df.format(subExenta + sub5 + sub10));
+
+        doc.add(table);
+    }
+
+    // --- MÉTODOS COMPARTIDOS REFACTORIZADOS ---
+
+    private void agregarTotalesGenerales(Document doc, double totalMonto, DocumentoElectronico de) throws DocumentException {
+        // Reutilizamos tu lógica de agregarTotales pero pasando el monto
+        String letras = NumberToLetterConverter.convertNumberToLetter(new BigDecimal(totalMonto));
+        Paragraph pLetras = new Paragraph(" Son guaraníes " + letras, FONT_NORMAL);
+        doc.add(pLetras);
+        
+        DecimalFormat df = getDecimalFormatter();
+        PdfPTable tIva = new PdfPTable(4); 
+        tIva.setWidthPercentage(100);
+        
+        BigDecimal iva5 = de.getgTotSub() != null ? de.getgTotSub().getdIVA5() : BigDecimal.ZERO;
+        BigDecimal iva10 = de.getgTotSub() != null ? de.getgTotSub().getdIVA10() : BigDecimal.ZERO;
+        BigDecimal totalIva = de.getgTotSub() != null ? de.getgTotSub().getdTotIVA() : BigDecimal.ZERO;
+
+        addCellPlain(tIva, "LIQUIDACION DE IVA: ", Element.ALIGN_LEFT, true);
+        addCellPlain(tIva, "(5%): " + df.format(iva5), Element.ALIGN_RIGHT, false);
+        addCellPlain(tIva, "(10%): " + df.format(iva10), Element.ALIGN_RIGHT, false);
+        addCellPlain(tIva, "TOTAL IVA: "+ df.format(totalIva), Element.ALIGN_RIGHT, true);
+        doc.add(tIva);
+    }
+
+    private DecimalFormat getDecimalFormatter() {
+        DecimalFormatSymbols symbols = new DecimalFormatSymbols(new Locale("es", "PY"));
+        symbols.setGroupingSeparator('.');
+        symbols.setDecimalSeparator(',');
+        return new DecimalFormat("#,###", symbols);
+    }
+
+    private void addFooterTotal(PdfPTable table, String label, String ex, String g5, String g10) {
+        PdfPCell c = new PdfPCell(new Phrase(label, FONT_BOLD));
+        c.setColspan(3);
+        table.addCell(c);
+        addCellData(table, ex, Element.ALIGN_RIGHT);
+        addCellData(table, g5, Element.ALIGN_RIGHT);
+        addCellData(table, g10, Element.ALIGN_RIGHT);
+    }
+
+    private void addFooterTotalFinal(PdfPTable table, String label, String val) {
+        PdfPCell c = new PdfPCell(new Phrase(label, FONT_BOLD));
+        c.setColspan(5);
+        table.addCell(c);
+        PdfPCell v = new PdfPCell(new Phrase(val, FONT_BOLD));
+        v.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        table.addCell(v);
+    }
 
     private org.w3c.dom.Document getDomDocument(byte[] xmlBytes) throws Exception {
         String xml = new String(Base64.getDecoder().decode(xmlBytes), StandardCharsets.UTF_8);
@@ -169,7 +301,7 @@ public class ImpresionServiceImpl implements ImpresionService {
 
     // --- SECCIONES PDF ---
 
-    private void agregarCabecera(Document doc, DocumentoElectronico de) throws DocumentException {
+    private void agregarCabecera(Document doc, DocumentoElectronico de, String tipoDocumento) throws DocumentException {
         PdfPTable table = new PdfPTable(3);
         table.setWidthPercentage(100);
         table.setWidths(new float[]{0.25f, 0.6f, 0.35f}); 
@@ -231,7 +363,8 @@ public class ImpresionServiceImpl implements ImpresionService {
         String vigencia = de.getgTimb().getdFeIniT() != null ? de.getgTimb().getdFeIniT().format(fmt) : "-";
         pRuc.add(new Chunk("Inicio de Vigencia: " + vigencia + "\n\n", FONT_NORMAL));
         
-        pRuc.add(new Chunk("FACTURA ELECTRÓNICA\n", FONT_BOLD_BIG));
+        String titulo = "NC".equalsIgnoreCase(tipoDocumento) ? "NOTA DE CRÉDITO ELECTRÓNICA" : "FACTURA ELECTRÓNICA";
+        pRuc.add(new Chunk(titulo + "\n", FONT_BOLD_BIG));
         String nroDoc = de.getgTimb().getdEst() + "-" + de.getgTimb().getdPunExp() + "-" + de.getgTimb().getdNumDoc();
         pRuc.add(new Chunk("N°: " + nroDoc, FONT_BOLD_BIG));
         
@@ -246,7 +379,7 @@ public class ImpresionServiceImpl implements ImpresionService {
         doc.add(Chunk.NEWLINE);
     }
 
-    private void agregarDatosCliente(Document doc, DocumentoElectronico de) throws DocumentException {
+    private void agregarDatosCliente(Document doc, DocumentoElectronico de, boolean incluyeCondicion) throws DocumentException {
         PdfPTable tableFrame = new PdfPTable(1);
         tableFrame.setWidthPercentage(100);
         PdfPCell cellFrame = new PdfPCell();
@@ -259,14 +392,25 @@ public class ImpresionServiceImpl implements ImpresionService {
 
         DateTimeFormatter fmtHora = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm:ss");
         addLabelValue(tDatos, "Fecha de Emisión:", de.getgDatGralOpe().getdFeEmiDE().format(fmtHora));
-        addLabelValue(tDatos, "Condición de Venta:", de.getgDtipDE().getgCamCond().getiCondOpe().getDescripcion());
+     // CORRECCIÓN: Manejo condicional de gCamCond
+        if (incluyeCondicion && de.getgDtipDE().getgCamCond() != null) {
+            addLabelValue(tDatos, "Condición de Venta:", de.getgDtipDE().getgCamCond().getiCondOpe().getDescripcion());
+        } else {
+            addLabelValue(tDatos, " ", " ");
+        }
         
         String rucCliente = de.getgDatGralOpe().getgDatRec().getdRucRec() != null 
                 ? de.getgDatGralOpe().getgDatRec().getdRucRec() + "-" + de.getgDatGralOpe().getgDatRec().getdDVRec()
                 : de.getgDatGralOpe().getgDatRec().getdNumIDRec();
         
         addLabelValue(tDatos, "Ruc/Doc N°:", rucCliente);
-        addLabelValue(tDatos, "Tipo de Operación:", de.getgDatGralOpe().getgOpeCom().getiTipTra().getDescripcion());
+        
+        
+        if (incluyeCondicion && de.getgDtipDE().getgCamCond() != null) {
+        	addLabelValue(tDatos, "Tipo de Operación:", de.getgDatGralOpe().getgOpeCom().getiTipTra().getDescripcion());
+        } else {
+            addLabelValue(tDatos, " ", " ");
+        }
 
         cellFrame.addElement(tDatos);
         
@@ -348,7 +492,7 @@ public class ImpresionServiceImpl implements ImpresionService {
 
             BigDecimal totalItem = det.getMonto().multiply(new BigDecimal(det.getCantidad()));
             
-            if (det.getExenta() > 0) {
+            if (det.getExenta() > 0 || (det.getExenta()*-1) > 0) {
                 addCellData(table, df.format(totalItem), Element.ALIGN_RIGHT);
                 addCellData(table, "", Element.ALIGN_RIGHT);
                 addCellData(table, "", Element.ALIGN_RIGHT);

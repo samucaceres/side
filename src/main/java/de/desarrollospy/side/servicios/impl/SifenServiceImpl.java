@@ -29,17 +29,22 @@ import de.desarrollospy.side.modelo.DetalleCobro;
 import de.desarrollospy.side.modelo.EDoc;
 import de.desarrollospy.side.modelo.ErroresDocumento;
 import de.desarrollospy.side.modelo.Evento;
+import de.desarrollospy.side.modelo.NotaCredito;
+import de.desarrollospy.side.modelo.NotaCreditoDetalle;
 import de.desarrollospy.side.repository.CobroRepository;
 import de.desarrollospy.side.repository.DetalleCobroRepository;
 import de.desarrollospy.side.repository.EDocRepository;
 import de.desarrollospy.side.repository.ErroresDocumentoRepository;
 import de.desarrollospy.side.repository.EventoRepository;
+import de.desarrollospy.side.repository.NotaCreditoDetalleRepository;
+import de.desarrollospy.side.repository.NotaCreditoRepository;
 import de.desarrollospy.side.servicios.SifenService;
 import jakarta.transaction.Transactional;
 
 import java.io.File;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -61,6 +66,10 @@ public class SifenServiceImpl implements SifenService {
     private CobroRepository cobroRepository;
     @Autowired
     private DetalleCobroRepository detalleCobroRepository;
+    @Autowired
+    private NotaCreditoRepository notaCreditoRepository;
+    @Autowired
+    private NotaCreditoDetalleRepository notaCreditoDetalleRepository;
     @Autowired
     private ErroresDocumentoRepository erroresDocumentoRepository;
     @Autowired
@@ -104,32 +113,40 @@ public class SifenServiceImpl implements SifenService {
         try {
             logger.info("Procesando documento (LOTE): " + idDocumento + " Tipo: " + tipoDocumento);
             
-            // 1. Obtener datos
-            String[] parts = idDocumento.split("-");
-            Cobro cobro = cobroRepository.findByCompositeId(
-                    Integer.parseInt(parts[0]), Integer.parseInt(parts[1]), 
-                    Integer.parseInt(parts[2]), Integer.parseInt(parts[3]), 
-                    Integer.parseInt(parts[4]))
-                    .orElseThrow(() -> new AppException(HttpStatus.NOT_FOUND, "No se encontró el Cobro: " + idDocumento));
-
-            Optional<EDoc> eDocOpt = eDocRepository.findByIdDocumentoOriginalAndTipoDocumento(idDocumento, tipoDocumento);
-            EDoc eDoc;
-
-            if (eDocOpt.isPresent()) {
-                eDoc = eDocOpt.get();
-                if ("APROBADO SET".equalsIgnoreCase(eDoc.getEstado())) {
-                    return "El documento ya fue APROBADO por la SET. CDC: " + eDoc.getCdc();
+            DocumentoElectronico de;
+            EDoc edoc;
+            // Buscar si ya existe el registro en edocs
+            Optional<EDoc> edocExistente = eDocRepository.findByIdDocumentoOriginalAndTipoDocumento(idDocumento, tipoDocumento);
+            if (edocExistente.isPresent()) {
+                edoc = edocExistente.get();
+                if ("APROBADO SET".equals(edoc.getEstado())) {
+                    return "DOCUMENTO YA APROBADO";
                 }
             } else {
-                eDoc = new EDoc();
+                edoc = new EDoc();
+                edoc.setIdDocumentoOriginal(idDocumento);
+                edoc.setTipoDocumento(tipoDocumento);
             }
 
-            // Generación del Documento Electrónico
-            DocumentoElectronico de;
             if ("FE".equalsIgnoreCase(tipoDocumento)) {
-                de = generarFacturaElectronica(idDocumento, eDoc, cobro);
+                // Lógica existente de Cobros (No se toca lo anterior)
+                String[] parts = idDocumento.split("-");
+                Cobro cobro = cobroRepository.findByCompositeId(
+                        Integer.parseInt(parts[0]), Integer.parseInt(parts[1]),
+                        Integer.parseInt(parts[2]), Integer.parseInt(parts[3]),
+                        Integer.parseInt(parts[4])
+                ).orElseThrow(() -> new AppException(HttpStatus.NOT_FOUND, "Cobro no encontrado"));
+
+                de = generarFacturaElectronica(idDocumento, edoc, cobro);
+
+            } else if ("NC".equalsIgnoreCase(tipoDocumento)) {
+
+                NotaCredito nc = notaCreditoRepository.findById(idDocumento)
+                        .orElseThrow(() -> new AppException(HttpStatus.NOT_FOUND, "Nota de Crédito no encontrada"));
+
+                de = generarNotaCreditoElectronica(idDocumento, edoc, nc);
             } else {
-                throw new AppException(HttpStatus.BAD_REQUEST, "Tipo de documento no implementado aún: " + tipoDocumento);
+                throw new AppException(HttpStatus.BAD_REQUEST, "Tipo de documento no soportado");
             }
 
             configurarCertificado();
@@ -146,10 +163,10 @@ public class SifenServiceImpl implements SifenService {
             byte[] encodedBytes = encoder.encode(xml.getBytes());
 
             // Guardado inicial en BD
-            eDoc.setCdc(de.getId());
-            eDoc.setEstado("PENDIENTE ENVIO");
-            eDoc.setXml(encodedBytes);
-            eDoc = eDocRepository.save(eDoc);
+            edoc.setCdc(de.getId());
+            edoc.setEstado("PENDIENTE ENVIO");
+            edoc.setXml(encodedBytes);
+            edoc = eDocRepository.save(edoc);
 
             // --- LÓGICA DE ENVÍO POR LOTE (REPLICANDO TU CÓDIGO ORIGINAL) ---
             
@@ -180,17 +197,17 @@ public class SifenServiceImpl implements SifenService {
                     error.setTipoDocumento(tipoDocumento);
                     error.setCdc(de.getId());
                     error.setFechaError(new Date());
-                    error.setNroDocumento(eDoc.getNroDocumento());
-                    error.setEstablecimiento(eDoc.getEstablecimiento());
-                    error.setPuntoExpedicion(eDoc.getPuntoExp());
+                    error.setNroDocumento(edoc.getNroDocumento());
+                    error.setEstablecimiento(edoc.getEstablecimiento());
+                    error.setPuntoExpedicion(edoc.getPuntoExp());
                     error.setOperacion("Sifen.recepcionLoteDE");
                     erroresDocumentoRepository.save(error);
 
                     // Actualización de Estado a RECHAZADO
-                    eDoc.setEstado("RECHAZADO SET");
-                    eDoc.setFechaEstado(LocalDateTime.now());
-                    eDoc.setVerificado(null);
-                    eDocRepository.save(eDoc);
+                    edoc.setEstado("RECHAZADO SET");
+                    edoc.setFechaEstado(LocalDateTime.now());
+                    edoc.setVerificado(null);
+                    eDocRepository.save(edoc);
                     
                 } catch (Exception e) {
                     logger.severe("Error al guardar el error en la base de datos: " + e.getMessage());
@@ -202,10 +219,10 @@ public class SifenServiceImpl implements SifenService {
 
             // 3. Éxito (0300): El lote fue recibido
             // Guardamos el Nro de Lote para consulta asincrónica posterior
-            eDoc.setEstado("ENVIADO SET");
-            eDoc.setNroLote(respuesta.getdProtConsLote()); // Guardamos el protocolo de consulta
-            eDoc.setFechaEstado(LocalDateTime.now());
-            eDocRepository.save(eDoc);
+            edoc.setEstado("ENVIADO SET");
+            edoc.setNroLote(respuesta.getdProtConsLote()); // Guardamos el protocolo de consulta
+            edoc.setFechaEstado(LocalDateTime.now());
+            eDocRepository.save(edoc);
 
             return "ENVIADO SET CORRECTAMENTE. Lote: " + respuesta.getdProtConsLote();
 
@@ -495,6 +512,219 @@ public class SifenServiceImpl implements SifenService {
 
         return de;
     }
+    
+    public DocumentoElectronico generarNotaCreditoElectronica(String idDocumento, EDoc edoc, NotaCredito nc) throws AppException {
+			DocumentoElectronico de = new DocumentoElectronico();
+			de.setdSisFact((short)1);
+			//de.Id y de.dDVId se setean en de.generalXml()
+			
+			if (edoc.getId() == null) {
+				edoc.setIdDocumentoOriginal(idDocumento);
+				edoc.setTipoDocumento("NC");
+				edoc.setNroDocumento(String.format("%7s", nc.getNroNc().trim()).replace(' ', '0'));
+				edoc.setEstablecimiento(nc.getEstablecimiento());
+				edoc.setPuntoExp(nc.getPuntoExp());
+				edoc.setFechaEmision(nc.getNotaFechahora());
+				edoc.setEnviado("NO");
+	        }
+			
+			//TgOpeDE
+			de.setgOpeDE(new TgOpeDE());//dCodSeg se genera en este constructor			
+			de.getgOpeDE().setiTipEmi(TTipEmi.NORMAL);
+			//de.getgOpeDE().setdInfoEmi("1");//
+			//de.getgOpeDE().setdInfoFisc("Información de interés del Fisco respecto al DE");
+			
+			//TgTimb
+			de.setgTimb(new TgTimb());
+			de.getgTimb().setiTiDE(TTiDE.NOTA_DE_CREDITO_ELECTRONICA);			
+			de.getgTimb().setdNumTim(nc.getNcredTimbrado());
+			String establecimiento = nc.getEstablecimiento();
+			//String establecimiento = "001";
+			String puntoExp = nc.getPuntoExp();
+			//String puntoExp = "001";
+			String nroComp = edoc.getNroDocumento();
+			de.getgTimb().setdEst(String.format("%" + 3 + "s", String.valueOf(establecimiento)).replace(' ', '0'));
+			de.getgTimb().setdPunExp(String.format("%" + 3 + "s", String.valueOf(puntoExp)).replace(' ', '0'));
+			de.getgTimb().setdNumDoc(String.format("%" + 7 + "s", String.valueOf(nroComp.trim())).replace(' ', '0'));
+			de.getgTimb().setdFeIniT(nc.getdFeIniT());			
+			//TdDatGralOpe
+			de.setgDatGralOpe(new TdDatGralOpe());
+			//Date fechaEmision = docs.getAutoFactura().getdFeEmiDE();	//Descomentar cuando se obtenga la fecha de la factura	
+			LocalDateTime fechaEmision = nc.getNotaFechahora();	
+			de.getgDatGralOpe().setdFeEmiDE(fechaEmision);
+			de.getgDatGralOpe().setgOpeCom(new TgOpeCom());
+			de.getgDatGralOpe().getgOpeCom().setiTipTra(TTipTra.PRESTACION_SERVICIOS);
+			de.getgDatGralOpe().getgOpeCom().setiTImp(TTImp.IVA);
+			de.getgDatGralOpe().getgOpeCom().setcMoneOpe(CMondT.PYG);
+			
+			//TdDatGralOpe.TgEmis
+			de.getgDatGralOpe().setgEmis(new TgEmis());
+			de.getgDatGralOpe().getgEmis().setdRucEm("80156217");		
+			de.getgDatGralOpe().getgEmis().setdDVEmi("1");
+			de.getgDatGralOpe().getgEmis().setiTipCont(TiTipCont.PERSONA_JURIDICA);
+			de.getgDatGralOpe().getgEmis().setcTipReg(TTipReg.REGIMEN_CONTABLE);			
+			de.getgDatGralOpe().getgEmis().setdNomEmi("INSTITUTO TECNICO SUPERIOR INTERCONTINENTAL");	
+			de.getgDatGralOpe().getgEmis().setdDirEmi(nc.getSedDirecc());
+			de.getgDatGralOpe().getgEmis().setdNumCas("0");
+			//MIENTRAS ESTE EN MODO DE PRUEBAS SE DEBE ESPECIFICAR QUE NO TIENE VALOR FISCAL
+//			de.getgDatGralOpe().getgEmis().setdNomEmi("INSTITUTO TECNICO SUPERIOR INTERCONTINENTAL - DOCUMENTO ELECTRÓNICO SIN VALOR COMERCIAL NI FISCAL - GENERADO EN AMBIENTE DE PRUEBA");
+//			
+			
+			de.getgDatGralOpe().getgEmis().setdDirEmi(nc.getSedDirecc());			
+			//de.getgDatGralOpe().getgEmis().setdNumCas("0");			
+			// departamento y ciudad de emision por establecimiento
+			de.getgDatGralOpe().getgEmis().setcDepEmi(TDepartamento.getByVal((short)nc.getIdDepartamentoSede()));
+			de.getgDatGralOpe().getgEmis().setcCiuEmi(nc.getIdCiudadSede());
+			de.getgDatGralOpe().getgEmis().setdDesCiuEmi(nc.getCiudadSede());			
+			de.getgDatGralOpe().getgEmis().setdTelEmi(nc.getSedTel());	
+			de.getgDatGralOpe().getgEmis().setdEmailE("contabutic.2017@gmail.com");				
+			
+			de.getgDatGralOpe().getgEmis().setgActEcoList(new ArrayList<TgActEco>());			
+			
+			TgActEco actEco = new TgActEco();	
+			actEco.setcActEco("85220");			
+			actEco.setdDesActEco("ENSEÑANZA SECUNDARIA DE FORMACIÓN TÉCNICA Y PROFESIONAL");	
+			de.getgDatGralOpe().getgEmis().getgActEcoList().add(actEco);
+			
+			//TdDatGralOpe.TgDatRec
+			de.getgDatGralOpe().setgDatRec(new TgDatRec());	
+			de.getgDatGralOpe().getgDatRec().setiNatRec(nc.getTipoDocPersona().equals("RUC")?TiNatRec.CONTRIBUYENTE:TiNatRec.NO_CONTRIBUYENTE);			
+			de.getgDatGralOpe().getgDatRec().setiTiOpe(TiTiOpe.B2C);
+			de.getgDatGralOpe().getgDatRec().setcPaisRec(PaisType.PRY);
+			de.getgDatGralOpe().getgDatRec().setdNomRec(nc.getaNombreDe());
+			
+			de.getgDatGralOpe().getgDatRec().setiTiContRec(TiTipCont.PERSONA_FISICA);
+			if(nc.getTipoDocPersona().equalsIgnoreCase("RUC") && 
+					Long.valueOf(nc.getRuc().substring(0, nc.getRuc().length()-2)) > 80000000){
+				de.getgDatGralOpe().getgDatRec().setiTiContRec(TiTipCont.PERSONA_JURIDICA);				
+			}
+			
+			if(nc.getTipoDocPersona().equalsIgnoreCase("RUC")){
+				//solo el tipo de documento es RUC se informa dRucRec y dDVRec
+				de.getgDatGralOpe().getgDatRec().setdRucRec(nc.getRuc().substring(0, nc.getRuc().length()-2));				
+				de.getgDatGralOpe().getgDatRec().setdDVRec((short)Integer.valueOf(nc.getRuc().substring(nc.getRuc().length()-1, nc.getRuc().length())).intValue());
+			}else{
+				//si tiene guion se debe eliminar
+				//de.getgDatGralOpe().getgDatRec().setdNumIDRec(nc.getRuc().replaceAll("-", ""));
+				de.getgDatGralOpe().getgDatRec().setdNumIDRec(nc.getRuc());
+				//solo cuando no es RUC se debe informar el Tipo de documento de identidad del receptor iTipIDRec
+				if(nc.getTipoDocPersona().equalsIgnoreCase("CI"))
+					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.CEDULA_PARAGUAYA);
+				else if(nc.getTipoDocPersona().equalsIgnoreCase("PAS"))
+					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.PASAPORTE);
+				else if(nc.getTipoDocPersona().equalsIgnoreCase("DIE"))
+					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.CEDULA_EXTRANJERA);
+				else if(nc.getTipoDocPersona().equalsIgnoreCase("INN"))
+					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.INNOMINADO);
+				else
+					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.OTRO);
+				
+			}
+
+
+				
+						
+			//////////////////////////////////// DATOS DE NOTA DE CREDITO ////////////////////////////////////////////
+			de.setgCamDEAsocList(new ArrayList<TgCamDEAsoc> ());
+			String idOrig = "";
+			List<NotaCreditoDetalle> detalles = notaCreditoDetalleRepository.findByNotaCreditoId(nc.getId());
+			for(NotaCreditoDetalle dnc:detalles) {		
+				if(!dnc.getFactura().equals(idOrig)) {
+					TgCamDEAsoc factura = new TgCamDEAsoc();			
+					if(dnc.getCdcFactura() != null && !dnc.getCdcFactura().isEmpty()){
+						factura.setiTipDocAso(TiTipDocAso.ELECTRONICO);
+						factura.setdCdCDERef(detalles.get(0).getCdcFactura());
+					}else{
+						factura.setiTipDocAso(TiTipDocAso.IMPRESO);
+						factura.setdNTimDI("10976918");				
+						factura.setdEstDocAso(String.format("%" + 3 + "s", String.valueOf(dnc.getdEstDocAso())).replace(' ', '0'));
+						factura.setdPExpDocAso(String.format("%" + 3 + "s", String.valueOf(dnc.getdPExpDocAso())).replace(' ', '0'));				
+						factura.setdNumDocAso(String.format("%" + 7 + "s", String.valueOf(dnc.getdNumDocAso().trim())).replace(' ', '0'));					
+						factura.setiTipoDocAso(TiTIpoDoc.FACTURA);				
+						factura.setdFecEmiDI(dnc.getdFecEmiDI());
+					}	
+					de.getgCamDEAsocList().add(factura);	
+					idOrig = dnc.getFactura();
+				}
+			}
+			de.setgDtipDE(new TgDtipDE());	
+			de.getgDtipDE().setgCamNCDE(new TgCamNCDE());
+			
+			switch(nc.getMotivo()) {
+				case "DESCUENTO":
+					de.getgDtipDE().getgCamNCDE().setiMotEmi(TiMotEmi.DESCUENTO);	
+					break;
+				case "DESCUENTOS":
+					de.getgDtipDE().getgCamNCDE().setiMotEmi(TiMotEmi.DESCUENTO);	
+					break;
+				case "DEVOLUCIONES":
+					de.getgDtipDE().getgCamNCDE().setiMotEmi(TiMotEmi.DEVOLUCION);	
+					break;
+				default:
+					de.getgDtipDE().getgCamNCDE().setiMotEmi(TiMotEmi.AJUSTE_DE_PRECIO);	
+			}	
+			de.getgDtipDE().setgCamCond(new TgCamCond());
+			de.getgDtipDE().getgCamCond().setiCondOpe(TiCondOpe.CONTADO);
+			de.getgDtipDE().getgCamCond().setgPaConEIniList(new ArrayList<TgPaConEIni>());
+			TgPaConEIni formaPago = new TgPaConEIni();
+			formaPago.setiTiPago(TiTiPago.PAGO_ELECTRONICO);
+			formaPago.setdMonTiPag(new BigDecimal(nc.getTotal()));
+			formaPago.setcMoneTiPag(CMondT.PYG);
+			de.getgDtipDE().getgCamCond().getgPaConEIniList().add(formaPago);
+			
+			//DE.TgDtipDE.gCamItem
+			de.getgDtipDE().setgCamItemList(new ArrayList<TgCamItem>());
+			TgCamItem item;
+			TgValorItem val;
+			TgCamIVA iva;	
+			
+			List<NotaCreditoDetalle> detNC = new ArrayList<NotaCreditoDetalle>();
+			List<NotaCreditoDetalle> detNCDtos = new ArrayList<NotaCreditoDetalle>();
+			for (NotaCreditoDetalle det: detalles) {
+				if (det.getMonto() < 0) {
+					detNCDtos.add(det);
+				} else {
+					detNC.add(det);
+				}
+			}
+			
+			int afecIva;		
+			for(NotaCreditoDetalle det: detNC){
+				item = new TgCamItem();
+				item.setdCodInt(det.getCodInt());
+				item.setdDesProSer(det.getDescriCta());	
+				item.setcUniMed(TcUniMed.UNI);
+				item.setdCantProSer(new BigDecimal(det.getCantidad()));
+				
+				val = new TgValorItem();
+				val.setdPUniProSer(new BigDecimal(det.getMonto()));					
+				if(det.getExenta() > 0)
+					afecIva = 3;				
+				else
+					afecIva = 1;
+				
+				iva = new TgCamIVA();
+				iva.setiAfecIVA(TiAfecIVA.getByVal((short)afecIva));				
+				iva.setdPropIVA((afecIva == 1) ? new BigDecimal(100) : BigDecimal.ZERO);	
+				iva.setdTasaIVA((afecIva == 1 ) ? (det.getIva5()>0?new BigDecimal(5):new BigDecimal(10)) : BigDecimal.ZERO);
+				iva.setdBasExe(null);
+				item.setgCamIVA(iva);
+				
+				val.setgValorRestaItem(new TgValorRestaItem());	
+				item.setgValorItem(val);
+				
+				
+				de.getgDtipDE().getgCamItemList().add(item);
+			}
+			de.setgTotSub(new TgTotSub());
+			
+			//TgTotSub esta parte ya hace todo solo el programa de generacion de xml
+			de.setgTotSub(new TgTotSub());	
+			
+			return de;
+		
+	} 
+    
     
  // Método auxiliar para guardar el error
     private void registrarError(EDoc eDoc, String codigo, String descripcion, String idDocOriginal, String tipo) {
