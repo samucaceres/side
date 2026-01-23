@@ -1,19 +1,19 @@
 server:
-  port: 8080
+  port: 8081
   servlet:
-    context-path: /itsin/api
+    context-path: /tm/api
 
 spring:
   application:
-    name: side-itsin
+    name: side-tm
 
   # Configuración de Base de Datos
   datasource:
-    #url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://192.167.42.91:5432/itsin?currentSchema=edoc,public}
-    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5440/itsin?currentSchema=edoc,public}
+    #url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://192.167.42.91:5432/tecnomeza_prod?currentSchema=edoc,public}
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5440/tecnomeza?currentSchema=edoc,public}
     username: ${SPRING_DATASOURCE_USERNAME:postgres}
-    #password: ${SPRING_DATASOURCE_PASSWORD:Alm@9999}
     password: ${SPRING_DATASOURCE_PASSWORD:123}
+    #password: ${SPRING_DATASOURCE_PASSWORD:123}
     driver-class-name: org.postgresql.Driver
 
   # Configuración de JPA / Hibernate
@@ -35,8 +35,8 @@ spring:
   mail:
     host: smtp.gmail.com
     port: 587
-    username: ${MAIL_USERNAME:soportegestionutic@gmail.com}
-    password: ${MAIL_PASSWORD:hkaxmarzfxnehiwd}
+    username: ${MAIL_USERNAME:manolo@gmail.com}
+    password: ${MAIL_PASSWORD:clavesegura}
     properties:
       mail:
         smtp:
@@ -56,9 +56,9 @@ app:
   # Nueva sección para Sifen (Certificados y Ambiente)
   sifen:
     # Ruta COMPLETA al archivo PFX. En Docker apuntará al volumen montado.
-    certificado-path: ${SIFEN_CERT_PATH:./config/edoc/80156217-1.pfx}
-    certificado-pass: ${SIFEN_CERT_PASS:sinfronteras196}
+    certificado-path: ${SIFEN_CERT_PATH:./config/edoc/MANOLO-MEZA-MOREL.pfx}
+    certificado-pass: ${SIFEN_CERT_PASS:T3cn02026.py}
     ambiente: ${SIFEN_AMBIENTE:DEV} # Valores: DEV o PROD
     # Configuración CSC (Solo necesaria para PROD, valores por defecto de prueba)
     id-csc: ${SIFEN_ID_CSC:001}
-    csc: ${SIFEN_CSC:315f5945ad9185ED2479BEC8b7D7bdc9}
+    csc: ${SIFEN_CSC:62929aDE33251DE7B32C8f9164DBe4Db}
