@@ -71,6 +71,12 @@ public class ImpresionServiceImpl implements ImpresionService {
     private static final Font FONT_NORMAL = FontFactory.getFont(FontFactory.HELVETICA, 8);
     private static final Font FONT_SMALL = FontFactory.getFont(FontFactory.HELVETICA, 6);
     private static final Font FONT_SMALL_BOLD = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 6);
+    
+ // Fuentes específicas para el Pie de Página
+    private static final Font FONT_FOOTER_NORMAL = FontFactory.getFont(FontFactory.HELVETICA, 7);
+    private static final Font FONT_FOOTER_BOLD = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 7);
+    private static final Font FONT_CDC = FontFactory.getFont(FontFactory.COURIER_BOLD, 9);
+    
     @Override
     public byte[] generarFacturaPdf(String idDocumento, String tipoDocumento) throws Exception {
         
@@ -314,85 +320,109 @@ public class ImpresionServiceImpl implements ImpresionService {
         tInfo.addCell(cInfo);
         doc.add(tInfo);
 
-        // --- TABLA DE ITEMS ---
-        float[] cols = {0.8f, 3.5f, 1f, 1.2f, 1.2f, 1.2f, 1.2f}; 
+     // --- TABLA DE ITEMS (AJUSTADA AL FORMATO DE LA IMAGEN) ---
+        // Columnas: Cod | Descripcion | UM | Cant | Precio | Descuento | Exenta | 5% | 10%
+        float[] cols = {0.8f, 3.5f, 0.8f, 0.8f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f}; 
         PdfPTable tItems = new PdfPTable(cols);
         tItems.setWidthPercentage(100);
         tItems.setHeaderRows(1);
         
-        String[] headers = {"CANT", "DESCRIPCIÓN", "PRECIO", "EXENTA", "5%", "10%", "TOTAL"};
+        // Encabezados exactos de la imagen
+        String[] headers = {"Cod", "Descripción", "U.M.", "Cant", "Precio Unit.", "Descuento", "Exentas", "5%", "10%"};
         for(String h : headers) addHeaderCell(tItems, h);
         
         DecimalFormat df = getDecimalFormatter();
         
         for (TgCamItem item : de.getgDtipDE().getgCamItemList()) {
-            addCellDataCenter(tItems, item.getdCantProSer().toString());
-            addCellDataLeft(tItems, item.getdDesProSer());
-            addCellDataRight(tItems, df.format(item.getgValorItem().getdPUniProSer()));
+            addCellDataCenter(tItems, item.getdCodInt()); // Cod
+            addCellDataLeft(tItems, item.getdDesProSer()); // Descripcion
+            addCellDataCenter(tItems, "UNI"); // U.M. (Hardcode UNI o extraer de cUniMed)
+            addCellDataCenter(tItems, item.getdCantProSer().toString()); // Cantidad
+            addCellDataRight(tItems, df.format(item.getgValorItem().getdPUniProSer())); // Precio Unitario
             
-            BigDecimal totalItem = item.getgValorItem().getgValorRestaItem().getdTotOpeItem(); // Precio * Cant - Desc
-            if (totalItem == null) {
-                // Fallback calculo manual si el SDK aun no lo populó (paso previo a XML)
-                totalItem = item.getgValorItem().getdPUniProSer().multiply(item.getdCantProSer());
+            // Descuento
+            BigDecimal descuento = BigDecimal.ZERO;
+            if (item.getgValorItem().getgValorRestaItem() != null && item.getgValorItem().getgValorRestaItem().getdDescItem() != null) {
+                descuento = item.getgValorItem().getgValorRestaItem().getdDescItem();
+            }
+            addCellDataRight(tItems, df.format(descuento)); // Descuento
+            
+            // Calculo del Total Item (Precio * Cant - Desc)
+            BigDecimal totalItem = item.getgValorItem().getdPUniProSer().multiply(item.getdCantProSer()).subtract(descuento);
+            // Fallback si el SDK ya calculó dTotOpeItem
+            if (item.getgValorItem().getgValorRestaItem() != null && item.getgValorItem().getgValorRestaItem().getdTotOpeItem() != null) {
+                 totalItem = item.getgValorItem().getgValorRestaItem().getdTotOpeItem();
             }
 
             int tasa = item.getgCamIVA().getdTasaIVA().intValue();
             
+            // Columnas de Impuestos (Exentas, 5%, 10%)
             if (tasa == 5) {
-                addCellDataRight(tItems, "0");
-                addCellDataRight(tItems, df.format(totalItem));
-                addCellDataRight(tItems, "0");
+                addCellDataRight(tItems, "0"); // Exenta
+                addCellDataRight(tItems, df.format(totalItem)); // 5%
+                addCellDataRight(tItems, "0"); // 10%
             } else if (tasa == 10) {
-                addCellDataRight(tItems, "0");
-                addCellDataRight(tItems, "0");
-                addCellDataRight(tItems, df.format(totalItem));
+                addCellDataRight(tItems, "0"); // Exenta
+                addCellDataRight(tItems, "0"); // 5%
+                addCellDataRight(tItems, df.format(totalItem)); // 10%
             } else { // Exenta
-                addCellDataRight(tItems, df.format(totalItem));
-                addCellDataRight(tItems, "0");
-                addCellDataRight(tItems, "0");
+                addCellDataRight(tItems, df.format(totalItem)); // Exenta
+                addCellDataRight(tItems, "0"); // 5%
+                addCellDataRight(tItems, "0"); // 10%
             }
-             // Columna Total Linea (Opcional, según diseño)
-             addCellDataRight(tItems, df.format(totalItem));
         }
         
         // --- TOTALES ---
         // Fila Subtotales
-        PdfPCell cSub = new PdfPCell(new Phrase("SUBTOTALES:", FONT_BOLD));
-        cSub.setColspan(3);
+        PdfPCell cSub = new PdfPCell(new Phrase("SUBTOTAL:", FONT_BOLD)); // Texto exacto imagen
+        cSub.setColspan(6); // Ajustado para que empiece en columna Exentas
         tItems.addCell(cSub);
         
         addCellDataRight(tItems, df.format(de.getgTotSub().getdSubExe()));
         addCellDataRight(tItems, df.format(de.getgTotSub().getdSub5()));
         addCellDataRight(tItems, df.format(de.getgTotSub().getdSub10()));
-        addCellDataRight(tItems, ""); // Espacio total
         
-        // Fila Total General
-        PdfPCell cTot = new PdfPCell(new Phrase("TOTAL A PAGAR:", FONT_BOLD));
-        cTot.setColspan(6);
-        tItems.addCell(cTot);
+        // Fila Total Operación
+        PdfPCell cTotOp = new PdfPCell(new Phrase("TOTAL DE LA OPERACIÓN:", FONT_BOLD));
+        cTotOp.setColspan(8);
+        tItems.addCell(cTotOp);
         
-        PdfPCell cTotVal = new PdfPCell(new Phrase(df.format(de.getgTotSub().getdTotOpe()), FONT_BOLD));
-        cTotVal.setHorizontalAlignment(Element.ALIGN_RIGHT);
-        tItems.addCell(cTotVal);
+        PdfPCell cTotOpVal = new PdfPCell(new Phrase(df.format(de.getgTotSub().getdTotOpe()), FONT_BOLD));
+        cTotOpVal.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        tItems.addCell(cTotOpVal);
+        
+        // Fila Total Guaraníes
+        PdfPCell cTotGs = new PdfPCell(new Phrase("TOTAL EN GUARANÍES:", FONT_BOLD));
+        cTotGs.setColspan(8);
+        tItems.addCell(cTotGs);
+        
+        PdfPCell cTotGsVal = new PdfPCell(new Phrase(df.format(de.getgTotSub().getdTotOpe()), FONT_BOLD));
+        cTotGsVal.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        tItems.addCell(cTotGsVal);
         
         doc.add(tItems);
         
-        // Letras y Liquidación IVA
+        // Liquidación IVA
         PdfPTable tLiq = new PdfPTable(1);
         tLiq.setWidthPercentage(100);
-        tLiq.setSpacingBefore(2);
+        // tLiq.setSpacingBefore(0); // Pegado a la tabla
         
         PdfPCell cLiq = new PdfPCell();
         cLiq.setPadding(3);
+        cLiq.setBorder(Rectangle.BOX);
         
-        String letras = NumberToLetterConverter.convertNumberToLetter(de.getgTotSub().getdTotOpe());
-        cLiq.addElement(new Paragraph("TOTAL EN GUARANÍES: " + letras, FONT_NORMAL));
-        
-        String liqStr = String.format("LIQUIDACIÓN DEL IVA:   (5%%): %s   (10%%): %s   TOTAL IVA: %s", 
+        // Según imagen: LIQUIDACIÓN IVA: (5%) XXXXXX (10%) XXXXXX TOTAL IVA: XXXXXX
+        String liqStr = String.format("LIQUIDACIÓN IVA:               (5%%) %s               (10%%) %s               TOTAL IVA: %s", 
                 df.format(de.getgTotSub().getdIVA5()),
                 df.format(de.getgTotSub().getdIVA10()),
                 df.format(de.getgTotSub().getdTotIVA()));
-        cLiq.addElement(new Paragraph(liqStr, FONT_NORMAL));
+        
+        Paragraph pLiq = new Paragraph(liqStr, FONT_NORMAL);
+        cLiq.addElement(pLiq);
+        
+        // Convertir numero a letras (Opcional, no sale en la imagen de la tabla pero es requisito legal a veces)
+        // String letras = NumberToLetterConverter.convertNumberToLetter(de.getgTotSub().getdTotOpe());
+        // cLiq.addElement(new Paragraph("TOTAL EN LETRAS: " + letras, FONT_SMALL));
         
         tLiq.addCell(cLiq);
         doc.add(tLiq);
@@ -479,53 +509,109 @@ public class ImpresionServiceImpl implements ImpresionService {
     }
 
     private void agregarPiePagina(Document doc, DocumentoElectronico de, String qrData) throws DocumentException {
+        // Tabla contenedora principal (QR a la izquierda, Textos a la derecha)
         PdfPTable table = new PdfPTable(2);
         table.setWidthPercentage(100);
-        table.setWidths(new float[]{0.25f, 0.75f});
-        table.setSpacingBefore(10);
-
-        // 1. QR
+        table.setWidths(new float[]{0.18f, 0.82f}); // 18% QR, 82% Texto
+        table.setSpacingBefore(10); // Separación con el contenido de arriba
+        
+        // Borde exterior del pie de página (Opcional, según diseño. Aquí usamos borde en celdas)
+        
+     // --- COLUMNA 1: QR ---
         PdfPCell cQr = new PdfPCell();
         cQr.setBorder(Rectangle.BOX);
-        cQr.setPadding(2);
+        cQr.setVerticalAlignment(Element.ALIGN_MIDDLE);
+        cQr.setHorizontalAlignment(Element.ALIGN_CENTER);
+        
+        // AJUSTE 1: Padding mínimo para que ocupe toda la celda
+        cQr.setPadding(1); 
+        
+        // cQr.setMinimumHeight(60); // Opcional: Remover si quieres que la altura la dicte la imagen
+
         try {
             if (qrData != null && !qrData.isEmpty()) {
-                // Generar QR (tu método existente)
                 QRCodeWriter qrWriter = new QRCodeWriter();
-                BitMatrix bitMatrix = qrWriter.encode(qrData, BarcodeFormat.QR_CODE, 200, 200);
+                // Generamos con más resolución para que no se pixele al escalar
+                BitMatrix bitMatrix = qrWriter.encode(qrData, BarcodeFormat.QR_CODE, 400, 400);
                 ByteArrayOutputStream pngOut = new ByteArrayOutputStream();
                 MatrixToImageWriter.writeToStream(bitMatrix, "PNG", pngOut);
                 Image qrImg = Image.getInstance(pngOut.toByteArray());
-                qrImg.scaleToFit(135, 135);
+                
+                // AJUSTE 2: Escalar para llenar el ancho disponible de la columna (aprox 100pt)
+                qrImg.scaleToFit(100, 100); 
+                
                 cQr.addElement(qrImg);
             }
-        } catch (Exception e) {}
+        } catch (Exception e) {
+            cQr.addElement(new Phrase("QR Error", FONT_SMALL));
+        }
+        table.addCell(cQr);
 
-        // 2. CDC y Leyenda
+        // --- COLUMNA 2: TEXTOS LEGALES Y CDC ---
         PdfPCell cInfo = new PdfPCell();
         cInfo.setBorder(Rectangle.BOX);
-        cInfo.setPadding(5);
+        cInfo.setPadding(6);
         
-        Paragraph p = new Paragraph();
-        p.add(new Chunk("Consulte la validez de este Documento Electrónico con el número de CDC impreso abajo en:\n", FONT_SMALL));
-        p.add(new Chunk("https://ekuatia.set.gov.py/consultas\n\n", FONT_SMALL)); // URL Oficial
+        // Usamos una sub-tabla dentro de la celda derecha para organizar las filas (Instrucciones, CDC, Legal)
+        PdfPTable tTextos = new PdfPTable(1);
+        tTextos.setWidthPercentage(100);
         
-        String cdcFmt = formatearCDC(de.getId());
-        // Caja gris para el CDC como en la imagen
-        Font fCdc = FontFactory.getFont(FontFactory.COURIER_BOLD, 10);
-        Chunk chCdc = new Chunk("CDC: " + cdcFmt, fCdc);
-        chCdc.setBackground(new Color(230, 230, 230));
-        p.add(chCdc);
-        p.add(Chunk.NEWLINE);
-        p.add(Chunk.NEWLINE);
+        // 1. Instrucciones de Consulta
+        PdfPCell cInstrucciones = new PdfPCell();
+        cInstrucciones.setBorder(Rectangle.NO_BORDER);
+        cInstrucciones.setPaddingBottom(4);
         
-        p.add(new Chunk("ESTE DOCUMENTO ES UNA REPRESENTACIÓN GRÁFICA DE UN DOCUMENTO ELECTRÓNICO (XML)\n", FONT_BOLD));
-        p.add(new Chunk("Si su documento electrónico presenta algún error, podrá solicitar la modificación dentro de las 72 horas siguientes de la emisión.", FONT_SMALL));
-        
-        cInfo.addElement(p);
+        Paragraph pInstr = new Paragraph();
+        pInstr.setLeading(9); // Interlineado ajustado (más pegado)
+        pInstr.add(new Chunk("Consulte la validez de esta Factura Electrónica con el número de CDC impreso abajo en:\n", FONT_FOOTER_NORMAL));
+        Font fontLink = FontFactory.getFont(FontFactory.HELVETICA, 7, Font.NORMAL, Color.BLUE);
+        Chunk cLink = new Chunk("https://ekuatia.set.gov.py/consultas-test", fontLink);
+        pInstr.add(cLink);
+        cInstrucciones.addElement(pInstr);
+        tTextos.addCell(cInstrucciones);
 
-        table.addCell(cQr);
+        // 2. Barra CDC (Fondo Gris)
+        PdfPCell cCDC = new PdfPCell();
+        cCDC.setBorder(Rectangle.NO_BORDER);
+        cCDC.setBackgroundColor(new Color(230, 230, 230)); // Gris claro como la imagen
+        cCDC.setPaddingTop(3);
+        cCDC.setPaddingBottom(3);
+        cCDC.setPaddingLeft(5);
+        cCDC.setVerticalAlignment(Element.ALIGN_MIDDLE);
+
+        String cdcFormateado = formatearCDC(de.getId());
+        Paragraph pCDC = new Paragraph("CDC: " + cdcFormateado, FONT_CDC);
+        pCDC.setAlignment(Element.ALIGN_CENTER); // O Element.ALIGN_LEFT según preferencia
+        cCDC.addElement(pCDC);
+        
+        // Espacio antes y después del CDC
+        PdfPCell cSpacer = new PdfPCell(); 
+        cSpacer.setBorder(Rectangle.NO_BORDER);
+        cSpacer.setFixedHeight(3);
+        tTextos.addCell(cSpacer); // Espacio arriba
+        tTextos.addCell(cCDC);    // La barra gris
+        tTextos.addCell(cSpacer); // Espacio abajo
+
+        // 3. Leyenda Legal (Negrita y Normal)
+        PdfPCell cLegal = new PdfPCell();
+        cLegal.setBorder(Rectangle.NO_BORDER);
+        
+        Paragraph pLegal = new Paragraph();
+        pLegal.setLeading(8); // Interlineado muy compacto para el texto legal
+        
+        // Título en negrita
+        pLegal.add(new Chunk("ESTE DOCUMENTO ES UNA REPRESENTACIÓN GRÁFICA DE UN DOCUMENTO ELECTRÓNICO (XML)\n", FONT_FOOTER_BOLD));
+        // Texto normal
+        pLegal.add(new Chunk("Si su documento electrónico presenta algún error, podrá solicitar la modificación dentro de las 72 horas siguientes de la emisión de este comprobante.", FONT_FOOTER_NORMAL));
+        
+        cLegal.addElement(pLegal);
+        tTextos.addCell(cLegal);
+
+        // Agregar la sub-tabla a la celda derecha principal
+        cInfo.addElement(tTextos);
         table.addCell(cInfo);
+
+        // Agregar la tabla principal al documento
         doc.add(table);
     }
     
