@@ -33,6 +33,7 @@ import de.desarrollospy.side.modelo.ErroresDocumento;
 import de.desarrollospy.side.modelo.Evento;
 import de.desarrollospy.side.modelo.NotaCredito;
 import de.desarrollospy.side.modelo.NotaCreditoDetalle;
+import de.desarrollospy.side.modelo.NotaCreditoSifenView;
 import de.desarrollospy.side.repository.CobroRepository;
 import de.desarrollospy.side.repository.DetalleCobroRepository;
 import de.desarrollospy.side.repository.EDocRepository;
@@ -42,6 +43,7 @@ import de.desarrollospy.side.repository.EventoRepository;
 import de.desarrollospy.side.repository.FacturaSifenViewRepository;
 import de.desarrollospy.side.repository.NotaCreditoDetalleRepository;
 import de.desarrollospy.side.repository.NotaCreditoRepository;
+import de.desarrollospy.side.repository.NotaCreditoSifenViewRepository;
 import de.desarrollospy.side.servicios.SifenService;
 import jakarta.transaction.Transactional;
 
@@ -115,6 +117,8 @@ public class SifenServiceImpl implements SifenService {
     private RemisionSifenViewRepository remisionSifenViewRepository;
     @Autowired
     private EntidadGobiernoRepository entidadGobiernoRepository;
+    @Autowired
+    private NotaCreditoSifenViewRepository notaCreditoSifenViewRepository;
 
     @Value("${app.sifen.certificado-path}")
     private String certificadoPath;
@@ -188,10 +192,12 @@ public class SifenServiceImpl implements SifenService {
 
             } else if ("NC".equalsIgnoreCase(tipoDocumento)) {
 
-                NotaCredito nc = notaCreditoRepository.findById(idDocumento)
+            	// NUEVA LÓGICA V2 PARA NOTA DE CRÉDITO
+                Long ncId = Long.parseLong(idDocumento);
+                NotaCreditoSifenView ncView = notaCreditoSifenViewRepository.findById(ncId)
                         .orElseThrow(() -> new AppException(HttpStatus.NOT_FOUND, "Nota de Crédito no encontrada"));
 
-                de = generarNotaCreditoElectronica(idDocumento, edoc, nc);
+                de = generarNotaCreditoElectronicaV2(idDocumento, edoc, ncView);
             } else if ("NR".equalsIgnoreCase(tipoDocumento) || "REM".equalsIgnoreCase(tipoDocumento)) { 
                 // NUEVA LÓGICA PARA REMISIÓN
                 // Asumiendo que idDocumento es el ID numérico de la remisión (ej: "15")
@@ -1063,6 +1069,224 @@ public class SifenServiceImpl implements SifenService {
 			return de;
 		
 	} 
+    
+    
+    /**
+     * Genera el objeto DocumentoElectronico (NC) a partir de la vista NotaCreditoSifenView.
+     * Cumple con Manual Técnico 150.
+     */
+    private DocumentoElectronico generarNotaCreditoElectronicaV2(String idDocumento, EDoc edoc, NotaCreditoSifenView view) {
+        DocumentoElectronico de = new DocumentoElectronico();
+        de.setdSisFact((short) 1);
+
+        // --- 0. Inicializar EDoc ---
+        if (edoc.getId() == null) {
+            edoc.setIdDocumentoOriginal(idDocumento);
+            edoc.setTipoDocumento("NC");
+            String nroDocStr = String.format("%07d", view.getNumeroDocumento());
+            edoc.setNroDocumento(nroDocStr);
+            edoc.setEstablecimiento(view.getCodigoEstablecimiento());
+            edoc.setPuntoExp(view.getCodigoPuntoExpedicion());
+            edoc.setFechaEmision(view.getFechaEmision());
+            edoc.setEnviado("NO");
+        }
+
+        // --- 1. Datos Operación (gOpeDE) ---
+        de.setgOpeDE(new TgOpeDE());
+        de.getgOpeDE().setiTipEmi(TTipEmi.NORMAL);
+        de.getgOpeDE().setdInfoEmi("Nota de Crédito generada desde Sistema Integrado");
+
+        // --- 2. Timbrado (gTimb) ---
+        de.setgTimb(new TgTimb());
+        de.getgTimb().setiTiDE(TTiDE.NOTA_DE_CREDITO_ELECTRONICA);
+        de.getgTimb().setdNumTim(view.getNumeroTimbrado().intValue());
+        de.getgTimb().setdEst(view.getCodigoEstablecimiento());
+        de.getgTimb().setdPunExp(view.getCodigoPuntoExpedicion());
+        de.getgTimb().setdNumDoc(String.format("%07d", view.getNumeroDocumento()));
+        if (view.getFechaInicioTimbrado() != null) {
+            de.getgTimb().setdFeIniT(view.getFechaInicioTimbrado());
+        } else {
+            de.getgTimb().setdFeIniT(view.getFechaEmision().toLocalDate());
+        }
+
+        // --- 3. Datos Generales (gDatGralOpe) ---
+        de.setgDatGralOpe(new TdDatGralOpe());
+        de.getgDatGralOpe().setdFeEmiDE(view.getFechaEmision());
+
+        // A. Operación Comercial (gOpeCom) - Obligatorio NC
+        TgOpeCom opeCom = new TgOpeCom();
+        // Mapear desde vista o default
+        short tipoTransaccion = view.getTipoOperacion() != null ? view.getTipoOperacion().shortValue() : 1;
+        opeCom.setiTipTra(TTipTra.getByVal(tipoTransaccion));
+        opeCom.setiTImp(TTImp.IVA);
+        opeCom.setcMoneOpe(CMondT.PYG);
+        de.getgDatGralOpe().setgOpeCom(opeCom);
+
+        // B. Emisor (gEmis)
+        TgEmis emisor = new TgEmis();
+        if (view.getEmisorRuc().contains("-")) {
+            emisor.setdRucEm(view.getEmisorRuc().split("-")[0]);
+            emisor.setdDVEmi(view.getEmisorRuc().split("-")[1]);
+        } else {
+            emisor.setdRucEm(view.getEmisorRuc());
+            emisor.setdDVEmi("0");
+        }
+        
+        emisor.setiTipCont(TiTipCont.PERSONA_JURIDICA); 
+        emisor.setcTipReg(TTipReg.REGIMEN_CONTABLE);
+        emisor.setdNomEmi(view.getEmisorRazonSocial());
+        emisor.setdDirEmi(view.getEmisorDireccion());
+        emisor.setdNumCas("0");
+        
+        emisor.setcDepEmi(TDepartamento.CENTRAL); 
+        emisor.setcCiuEmi(view.getEmisorCiudadId()); 
+        emisor.setdDesCiuEmi(view.getEmisorCiudadDesc());
+        emisor.setdTelEmi(view.getEmisorTelefono());
+        emisor.setdEmailE(view.getEmisorEmail());
+
+        // Actividad Económica
+        List<TgActEco> actEcos = new ArrayList<>();
+        TgActEco act1 = new TgActEco();
+        act1.setcActEco("62020"); 
+        act1.setdDesActEco("ACTIVIDADES DE CONSULTORÍA Y GESTIÓN DE SERVICIOS INFORMÁTICOS");
+        actEcos.add(act1);
+        emisor.setgActEcoList(actEcos);
+        de.getgDatGralOpe().setgEmis(emisor);
+
+        // C. Receptor (gDatRec)
+        TgDatRec receptor = new TgDatRec();
+        receptor.setdNomRec(view.getReceptorRazonSocial());
+        receptor.setiTiOpe(view.getReceptorDocumentoNumero().contains("-") ? TiTiOpe.B2B : TiTiOpe.B2C);
+        receptor.setcPaisRec(PaisType.PRY);
+
+        if (view.getReceptorDocumentoNumero().contains("-")) {
+            receptor.setiNatRec(TiNatRec.CONTRIBUYENTE);
+            receptor.setiTiContRec(TiTipCont.PERSONA_FISICA); 
+            String[] rucParts = view.getReceptorDocumentoNumero().split("-");
+            receptor.setdRucRec(rucParts[0]);
+            receptor.setdDVRec(Short.valueOf(rucParts[1]));
+        } else {
+            receptor.setiNatRec(TiNatRec.NO_CONTRIBUYENTE);
+            short tipoDoc = view.getReceptorTipoDocumentoCodigo() != null ? view.getReceptorTipoDocumentoCodigo().shortValue() : TiTipDocRec.CEDULA_PARAGUAYA.getVal();
+            receptor.setiTipIDRec(TiTipDocRec.getByVal(tipoDoc));
+            receptor.setdNumIDRec(view.getReceptorDocumentoNumero());
+        }
+
+        if (view.getReceptorDireccion() != null && !view.getReceptorDireccion().isEmpty()) {
+            receptor.setdDirRec(view.getReceptorDireccion());
+            receptor.setdNumCasRec(0);
+            receptor.setcDepRec(TDepartamento.getByVal(view.getReceptorDepartamentoId().shortValue()));
+            receptor.setcDisRec(view.getReceptorDistritoId().shortValue());
+            receptor.setcCiuRec(view.getReceptorCiudadId());
+            receptor.setdDesCiuRec(view.getReceptorCiudadDesc());
+            receptor.setdDesDisRec(view.getReceptorDistritoDesc());
+        }
+        
+        // Verificar Entidad de Gobierno (B2G) si aplica
+        // ... (Tu lógica B2G existente) ...
+
+        de.getgDatGralOpe().setgDatRec(receptor);
+
+        // --- 4. Datos Específicos NC (gDtipDE -> gCamNCDE) ---
+        de.setgDtipDE(new TgDtipDE());
+        TgCamNCDE ncDe = new TgCamNCDE();
+        
+        // Motivo de emisión (E11.1)
+        short motivo = view.getMotivoEmision() != null ? view.getMotivoEmision().shortValue() : TiMotEmi.DEVOLUCION.getVal();
+        ncDe.setiMotEmi(TiMotEmi.getByVal(motivo));
+        de.getgDtipDE().setgCamNCDE(ncDe);
+
+        // --- 5. Documentos Asociados (gCamDEAsoc) ---
+        // Grupo E12 - Obligatorio para NC
+        if (view.getDocumentoAsociado() != null) {
+            List<TgCamDEAsoc> docsAsoc = new ArrayList<>();
+            TgCamDEAsoc asoc = new TgCamDEAsoc();
+            NotaCreditoSifenView.DocumentoAsociadoJson docJson = view.getDocumentoAsociado();
+            
+            // 1=Electrónico, 2=Impreso
+            if (docJson.getTipoDocumentoAsoc() == 1) {
+                asoc.setiTipDocAso(TiTipDocAso.ELECTRONICO);
+                asoc.setdCdCDERef(docJson.getCdcAsoc());
+            } else {
+                asoc.setiTipDocAso(TiTipDocAso.IMPRESO);
+                asoc.setiTipoDocAso(TiTIpoDoc.FACTURA); // Asumimos factura
+                // Timbrado
+                if (docJson.getTimbradoAsoc() != null) {
+                    asoc.setdNTimDI(String.valueOf(docJson.getTimbradoAsoc()));
+                }
+                // Formateo de número (Establecimiento-PuntoExp-Numero)
+                // Ojo: Si tu vista devuelve el número entero, hay que ver si tienes est/pexp de la factura asociada
+                // Por ahora usamos un formateo genérico o extraemos del JSON si lo agregamos
+                // asoc.setdEstDocAso(...);
+                // asoc.setdPExpDocAso(...);
+                asoc.setdNumDocAso(String.format("%07d", docJson.getNumeroAsoc()));
+                
+                if (docJson.getFechaEmisionAsoc() != null) {
+                    asoc.setdFecEmiDI(docJson.getFechaEmisionAsoc());
+                }
+            }
+            docsAsoc.add(asoc);
+            de.setgCamDEAsocList(docsAsoc);
+        }
+
+        // --- 6. Condición de Operación (gCamCond) ---
+        // Para NC suele ser Contado por definición (ya se facturó antes), 
+        // pero SIFEN pide el grupo. Usamos Contado -> Pago Electrónico o Compensación
+        TgCamCond camCond = new TgCamCond();
+        camCond.setiCondOpe(TiCondOpe.CONTADO);
+        
+        List<TgPaConEIni> listaPagos = new ArrayList<>();
+        TgPaConEIni pago = new TgPaConEIni();
+        // NOTA: Para NC, el medio de pago suele ser "Devolución" o "Compensación", 
+        // pero el SDK/SIFEN valida contra una lista. TiTiPago.OTRO o COMPENSACION es común.
+        pago.setiTiPago(TiTiPago.EFECTIVO); // Ajustar según negocio (ej. Compensación)
+        pago.setdDesTiPag("Devolución/Compensación");
+        pago.setdMonTiPag(view.getTotalOperacion());
+        pago.setcMoneTiPag(CMondT.PYG);
+        listaPagos.add(pago);
+        camCond.setgPaConEIniList(listaPagos);
+        
+        de.getgDtipDE().setgCamCond(camCond);
+
+        // --- 7. Ítems (gCamItem) ---
+        List<TgCamItem> items = new ArrayList<>();
+        
+        for (NotaCreditoSifenView.DetalleNotaCreditoJson detalle : view.getDetalles()) {
+            TgCamItem item = new TgCamItem();
+            item.setdCodInt(detalle.getCodigoInterno());
+            item.setdDesProSer(detalle.getDescripcion());
+            item.setcUniMed(TcUniMed.getByVal(detalle.getUnidadMedidaCod().shortValue())); 
+            item.setdCantProSer(detalle.getCantidad());
+            
+            // Valores
+            TgValorItem val = new TgValorItem();
+            val.setdPUniProSer(detalle.getPrecioUnitario());
+            
+            // Valor Resta (Descuento) - Obligatorio instanciar
+            TgValorRestaItem resta = new TgValorRestaItem();
+            resta.setdDescItem(BigDecimal.ZERO); // Generalmente 0 en la línea de NC
+            val.setgValorRestaItem(resta);
+            
+            // Impuestos
+            TgCamIVA iva = new TgCamIVA();
+            int afecIva = detalle.getAfectacionIva() != null ? detalle.getAfectacionIva() : 1; 
+            iva.setiAfecIVA(TiAfecIVA.getByVal((short)afecIva));
+            
+            iva.setdPropIVA(afecIva == 1 || afecIva == 4 ? new BigDecimal(100) : BigDecimal.ZERO);
+            iva.setdTasaIVA(new BigDecimal(detalle.getTasaIva()));
+            
+            item.setgCamIVA(iva);
+            item.setgValorItem(val);
+            items.add(item);
+        }
+        
+        de.getgDtipDE().setgCamItemList(items);
+
+        // --- 8. Totales ---
+        de.setgTotSub(new TgTotSub());
+
+        return de;
+    }
     
     private DocumentoElectronico generarRemisionElectronica(String idDocumento, EDoc edoc, RemisionSifenView view) {
         DocumentoElectronico de = new DocumentoElectronico();
