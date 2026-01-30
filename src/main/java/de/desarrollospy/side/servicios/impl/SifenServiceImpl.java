@@ -295,285 +295,6 @@ public class SifenServiceImpl implements SifenService {
             throw new AppException(HttpStatus.INTERNAL_SERVER_ERROR, "Error interno: " + e.getMessage());
         }
     }
-
-    // He añadido el parámetro Cobro para no buscarlo dos veces
-    private DocumentoElectronico generarFacturaElectronica(String idDocumento, EDoc eDoc, Cobro cobro) {
-        
-        List<DetalleCobro> detallesCobro = detalleCobroRepository.findByCompositeId(
-                cobro.getNroCobro(), cobro.getIdSede(), cobro.getIdCaja(), 
-                cobro.getNroApecie(), cobro.getIdFuncio());
-
-        // Inicializar EDoc
-        if (eDoc.getId() == null) {
-            eDoc.setIdDocumentoOriginal(idDocumento);
-            eDoc.setTipoDocumento("FE");
-            eDoc.setNroDocumento(String.format("%7s", cobro.getNroFact().trim()).replace(' ', '0'));
-            eDoc.setEstablecimiento(cobro.getNroSucfac());
-            eDoc.setPuntoExp(cobro.getNroExped());
-            eDoc.setFechaEmision(cobro.getCobFechahora());
-            eDoc.setEnviado("NO");
-        }
-
-        DocumentoElectronico de = new DocumentoElectronico();
-        de.setdSisFact((short) 1);
-
-        // 1. Datos Operación
-        de.setgOpeDE(new TgOpeDE());
-        de.getgOpeDE().setiTipEmi(TTipEmi.NORMAL);
-
-        // 2. Timbrado
-        de.setgTimb(new TgTimb());
-        de.getgTimb().setiTiDE(TTiDE.FACTURA_ELECTRONICA);
-        de.getgTimb().setdNumTim(Integer.valueOf(cobro.getNroTimb()));
-        de.getgTimb().setdEst(String.format("%3s", cobro.getNroSucfac()).replace(' ', '0'));
-        de.getgTimb().setdPunExp(String.format("%3s", cobro.getNroExped()).replace(' ', '0'));
-        de.getgTimb().setdNumDoc(String.format("%7s", cobro.getNroFact().trim()).replace(' ', '0'));
-        if (cobro.getdFeIniT() != null) {
-            de.getgTimb().setdFeIniT(cobro.getdFeIniT());
-        }
-
-        // 3. Datos Generales
-        de.setgDatGralOpe(new TdDatGralOpe());
-        de.getgDatGralOpe().setdFeEmiDE(cobro.getCobFechahora());
-        
-        de.getgDatGralOpe().setgOpeCom(new TgOpeCom());
-        de.getgDatGralOpe().getgOpeCom().setiTipTra(TTipTra.PRESTACION_SERVICIOS); 
-        de.getgDatGralOpe().getgOpeCom().setiTImp(TTImp.IVA);
-        de.getgDatGralOpe().getgOpeCom().setcMoneOpe(CMondT.PYG);
-        
-        if (!CMondT.PYG.equals(de.getgDatGralOpe().getgOpeCom().getcMoneOpe())) {
-            //de.getgDatGralOpe().getgOpeCom().setdCondTiCam(TiCondOpe.CONTADO); 
-        }
-
-        // 4. Emisor
-        TgEmis emisor = new TgEmis();
-        emisor.setdRucEm("80113109");
-        emisor.setdDVEmi("0");
-        emisor.setiTipCont(TiTipCont.PERSONA_JURIDICA);
-        emisor.setcTipReg(TTipReg.REGIMEN_CONTABLE);
-        emisor.setdNomEmi("TECNOMEZA SOCIEDAD ANONIMA");
-        emisor.setdDirEmi(cobro.getSedDirecc());
-        emisor.setdNumCas("0");
-        
-        short idDepto = (cobro.getIdDepartamentoSede() != null) ? cobro.getIdDepartamentoSede().shortValue() : 0;
-        TDepartamento deptoEnum = TDepartamento.getByVal(idDepto);
-        if (deptoEnum == null) deptoEnum = TDepartamento.CAPITAL;
-        emisor.setcDepEmi(deptoEnum);
-        
-        emisor.setcCiuEmi(cobro.getIdCiudadSede() != null ? cobro.getIdCiudadSede() : 1);
-        emisor.setdDesCiuEmi(cobro.getCiudadSede() != null ? cobro.getCiudadSede() : "ASUNCION");
-        emisor.setdTelEmi(cobro.getSedTel());
-        emisor.setdEmailE("manolo@tecnomeza.com.py");
-
-        List<TgActEco> actEcos = new ArrayList<>();
-        TgActEco act1 = new TgActEco();
-        act1.setcActEco("85220");
-        act1.setdDesActEco("ENSEÑANZA SECUNDARIA DE FORMACIÓN TÉCNICA Y PROFESIONAL");
-        actEcos.add(act1);
-        emisor.setgActEcoList(actEcos);
-        de.getgDatGralOpe().setgEmis(emisor);
-
-        // 5. Receptor
-        TgDatRec receptor = new TgDatRec();
-        receptor.setiNatRec(cobro.getTipoDocPersona().equalsIgnoreCase("RUC") ? TiNatRec.CONTRIBUYENTE : TiNatRec.NO_CONTRIBUYENTE);
-        receptor.setiTiOpe(TiTiOpe.B2C);
-        receptor.setcPaisRec(PaisType.PRY);
-        receptor.setdNomRec(cobro.getaNombreDe());
-        
-        if ("RUC".equalsIgnoreCase(cobro.getTipoDocPersona())) {
-            receptor.setiTiContRec(TiTipCont.PERSONA_JURIDICA);
-            String rucRaw = cobro.getRucDe();
-            if (rucRaw != null && rucRaw.contains("-")) {
-                receptor.setdRucRec(rucRaw.split("-")[0]);
-                try {
-                    receptor.setdDVRec(Short.valueOf(rucRaw.split("-")[1]));
-                } catch (NumberFormatException e) {
-                    receptor.setdDVRec((short)0);
-                }
-            } else {
-                 receptor.setdRucRec(rucRaw);
-                 receptor.setdDVRec((short)0); 
-            }
-        } else {
-             receptor.setiTipIDRec(TiTipDocRec.CEDULA_PARAGUAYA);
-             receptor.setdNumIDRec(cobro.getRucDe());
-        }
-        
-//        if (cobro.getPerDirecc() != null && !cobro.getPerDirecc().isEmpty()) {
-//            receptor.setdDirRec(cobro.getPerDirecc());
-//            
-//         // FIX CRÍTICO: Asignar valores por defecto para evitar caída del sistema
-//            // Idealmente esto debería venir de la BD, pero 'Cobro' no tiene estos campos.
-//            receptor.setcDepRec(TDepartamento.CAPITAL);
-//            receptor.setcDisRec((short)1); // ID Distrito genérico (Asunción)
-//            receptor.setcCiuRec(1); // ID Ciudad genérico (Asunción)
-//            receptor.setdDesCiuRec("ASUNCION");
-//            receptor.setdDesDisRec("ASUNCION");
-//        }
-        de.getgDatGralOpe().setgDatRec(receptor);
-
-     // 6. Condición de Operación y Campos de Factura
-        de.setgDtipDE(new TgDtipDE());
-
-        // A. Campos Obligatorios de Factura Electrónica (gCamFE)
-        com.roshka.sifen.core.fields.request.de.TgCamFE gCamFE = new com.roshka.sifen.core.fields.request.de.TgCamFE();
-        gCamFE.setiIndPres(com.roshka.sifen.core.types.TiIndPres.OPERACION_PRESENCIAL);
-        de.getgDtipDE().setgCamFE(gCamFE);
-
-        // B. Condición de Operación (gCamCond)
-        TgCamCond camCond = new TgCamCond();
-        boolean esContado = cobro.getDorespNomb() != null && cobro.getDorespNomb().trim().equalsIgnoreCase("FACTURA CONTADO");
-        camCond.setiCondOpe(esContado ? TiCondOpe.CONTADO : TiCondOpe.CREDITO);
-
-        if (esContado) {
-            // SI ES CONTADO: Debemos agregar la Forma de Pago (Efectivo por defecto)
-            List<com.roshka.sifen.core.fields.request.de.TgPaConEIni> listaPagos = new ArrayList<>();
-            com.roshka.sifen.core.fields.request.de.TgPaConEIni pago = new com.roshka.sifen.core.fields.request.de.TgPaConEIni();
-            pago.setiTiPago(com.roshka.sifen.core.types.TiTiPago.EFECTIVO); // Asumimos Efectivo
-            pago.setdDesTiPag("Efectivo");
-            pago.setdMonTiPag(new BigDecimal(cobro.getTotal())); // Monto total de la operación
-            pago.setcMoneTiPag(CMondT.PYG);
-            listaPagos.add(pago);
-            camCond.setgPaConEIniList(listaPagos);
-        } else {
-            // SI ES CRÉDITO: Debemos agregar el detalle del crédito
-            com.roshka.sifen.core.fields.request.de.TgPagCred cred = new com.roshka.sifen.core.fields.request.de.TgPagCred();
-            cred.setiCondCred(com.roshka.sifen.core.types.TiCondCred.PLAZO);
-            cred.setdPlazoCre("30 días"); // Valor estándar para evitar error (Ajustar si tienes el dato real)
-            camCond.setgPagCred(cred);
-        }
-
-        de.getgDtipDE().setgCamCond(camCond);
-        
-        // 7. --- LOGICA ORIGINAL DE ITEMS Y DESCUENTOS ---
-        
-        de.getgDtipDE().setgCamItemList(new ArrayList<TgCamItem>());
-        TgCamItem item;
-        TgValorItem val;
-        TgCamIVA iva;	
-        
-        List<DetalleCobro> detCobros = new ArrayList<DetalleCobro>();
-        List<DetalleCobro> detCobroDtos = new ArrayList<DetalleCobro>();
-        
-        //Se separan las cuotas de los descuentos
-        for (DetalleCobro detCobro : detallesCobro) {
-            if (detCobro.getMonto().signum() == -1) {
-                detCobro.setEsGlobal(false);
-                detCobroDtos.add(detCobro);
-            } else {
-                detCobro.setMontoDescuento(BigDecimal.ZERO);
-                detCobros.add(detCobro);
-            }
-        }
-        
-        //Se verifica si el monto afecta a una sola cuota o a varias cuotas
-        for(DetalleCobro desc : detCobroDtos) {
-            for(DetalleCobro detCobro: detCobros) {
-                if (desc.getDesNroCta().equals(detCobro.getCodInt())) {
-                    if(desc.getMonto().abs().compareTo(detCobro.getMonto())>0) {
-                        desc.setEsGlobal(true);
-                    }
-                }
-            }
-        }
-        
-        //Se asignan los montos de descuentos para cada cuota
-        for(DetalleCobro desc : detCobroDtos) {
-            
-            if(desc.isEsGlobal()){ //Si el descuento afecta a varias cuotas
-                
-                BigDecimal totalMontoConDesc = BigDecimal.ZERO;
-                BigDecimal totalPorcen = BigDecimal.ZERO;
-                BigDecimal totalDescuento = BigDecimal.ZERO;
-                
-                //Se calcula el monto total afectado por el descuento
-                for(DetalleCobro detCobro: detCobros){		
-                    // Nota: Asegúrate que idAranc y ctaSaldo no sean nulos en BD para evitar NullPointer
-                    if(detCobro.getIdAranc() != null && desc.getIdAranc() != null 
-                       && detCobro.getIdAranc().compareTo(desc.getIdAranc())==0 
-                       && detCobro.getCtaSaldo() != null && detCobro.getCtaSaldo().compareTo(BigDecimal.ZERO)==0) {
-                        totalMontoConDesc = totalMontoConDesc.add(detCobro.getMonto());
-                    }
-                }
-                
-                //Se calcula el porcentaje de descuento
-                if(totalMontoConDesc.compareTo(BigDecimal.ZERO) != 0) {
-                    totalPorcen = desc.getMonto().abs().multiply(BigDecimal.valueOf(100)).divide(totalMontoConDesc, 2, RoundingMode.HALF_UP);
-                }
-                
-                //Se calcula el monto del descuento para cada cuota
-                for(DetalleCobro detCobro: detCobros){		
-                     if(detCobro.getIdAranc() != null && desc.getIdAranc() != null 
-                        && detCobro.getIdAranc().compareTo(desc.getIdAranc())==0 
-                        && detCobro.getCtaSaldo() != null && detCobro.getCtaSaldo().compareTo(BigDecimal.ZERO)==0) {
-                        detCobro.setMontoDescuento(totalPorcen.multiply(detCobro.getMonto()).divide(BigDecimal.valueOf(100)));
-                        totalDescuento = totalDescuento.add(detCobro.getMontoDescuento());
-                    }
-                }
-                
-            }else {//Si el descuento afecta a una sola cuota
-                
-                //Se busca la cuota afectada por el descuento
-                for(DetalleCobro detCobro: detCobros){
-                    if (desc.getDesNroCta().equals(detCobro.getCodInt())) {
-                        detCobro.setMontoDescuento(desc.getMonto().abs());
-                    }
-                }
-                    
-            }
-        }
-        
-        int afecIva;
-        for(DetalleCobro detCobro: detCobros){		
-            item = new TgCamItem();
-            item.setdCodInt(detCobro.getCodInt() != null ? detCobro.getCodInt() : "0");
-            item.setdDesProSer(detCobro.getDescriCta()!=null?detCobro.getDescriCta():detCobro.getDetProSer());	
-            if(detCobro.getObs()!=null && !detCobro.getObs().trim().equals("")) {
-                item.setdDesProSer(detCobro.getObs());
-            }
-            item.setcUniMed(TcUniMed.UNI);
-            item.setdCantProSer(new BigDecimal(detCobro.getCantidad()));
-            
-            val = new TgValorItem();
-            val.setdPUniProSer(detCobro.getMonto());					
-            
-            
-            if(detCobro.getExenta() != null && detCobro.getExenta() > 0)
-                afecIva = 3;				
-            else
-                afecIva = 1;
-            
-            iva = new TgCamIVA();
-            iva.setiAfecIVA(TiAfecIVA.getByVal((short)afecIva));				
-            iva.setdPropIVA((afecIva == 1) ? new BigDecimal(100) : BigDecimal.ZERO);	
-            
-            BigDecimal tasaVal = BigDecimal.ZERO;
-            if(afecIva == 1) {
-                if(detCobro.getIva5() != null && detCobro.getIva5() > 0) tasaVal = new BigDecimal(5);
-                else tasaVal = new BigDecimal(10);
-            }
-            iva.setdTasaIVA(tasaVal);
-            iva.setdBasExe(null);
-            item.setgCamIVA(iva);
-
-            TgValorRestaItem resta = new TgValorRestaItem();
-            
-            // Lógica de asignación de descuento
-            if(detCobro.getMontoDescuento() != null && detCobro.getMontoDescuento().compareTo(BigDecimal.ZERO)>0){
-                resta.setdDescItem(detCobro.getMontoDescuento());
-            }
-
-            val.setgValorRestaItem(resta);
-            item.setgValorItem(val);
-            
-            de.getgDtipDE().getgCamItemList().add(item);
-        }
-        
-        // Total Sub (Obligatorio)
-        de.setgTotSub(new TgTotSub()); 
-
-        return de;
-    }
     
     /**
      * Genera el objeto DocumentoElectronico (FE) a partir de la vista FacturaSifenView.
@@ -630,11 +351,11 @@ public class SifenServiceImpl implements SifenService {
         opeCom.setiTipTra(TTipTra.getByVal(tipoTransaccion)); 
         
         opeCom.setiTImp(TTImp.IVA); // Impuesto afectado: IVA (1)
-        opeCom.setcMoneOpe(CMondT.PYG); // Moneda: Guaraníes por defecto. Ajustar si tu vista trae moneda.
+        opeCom.setcMoneOpe(CMondT.getByName(view.getMoneda())); // Moneda: Guaraníes por defecto. Ajustar si tu vista trae moneda.
         
         // Si fuera moneda extranjera:
-        // opeCom.setdTiCam(tipoCambio);
-        // opeCom.setdCondTiCam(TiCondTiCam.GLOBAL); 
+         opeCom.setdTiCam(new BigDecimal(view.getTipoCambio()));
+         opeCom.setdCondTiCam(TdCondTiCam.GLOBAL); 
         
         de.getgDatGralOpe().setgOpeCom(opeCom);
 
@@ -663,17 +384,8 @@ public class SifenServiceImpl implements SifenService {
         emisor.setdEmailE(view.getEmisorEmail());
 
         // Actividad Económica
-        List<TgActEco> actEcos = new ArrayList<>();
-        TgActEco act1 = new TgActEco();
-        act1.setcActEco("62020"); // Código genérico, ajustar
-        act1.setdDesActEco("ACTIVIDADES DE CONSULTORÍA Y GESTIÓN DE SERVICIOS INFORMÁTICOS");
-        actEcos.add(act1);
         
-        TgActEco act2 = new TgActEco();
-        act2.setcActEco("33200"); // Código genérico, ajustar
-        act2.setdDesActEco("INSTALACIÓN DE MÁQUINAS Y EQUIPOS");
-        actEcos.add(act2);
-        emisor.setgActEcoList(actEcos);
+        emisor.setgActEcoList(getActividadesEconomicas());
         de.getgDatGralOpe().setgEmis(emisor);
 
         // C. Receptor (gDatRec)
@@ -857,220 +569,6 @@ public class SifenServiceImpl implements SifenService {
 
         return de;
     }
-    
-    public DocumentoElectronico generarNotaCreditoElectronica(String idDocumento, EDoc edoc, NotaCredito nc) throws AppException {
-			DocumentoElectronico de = new DocumentoElectronico();
-			de.setdSisFact((short)1);
-			//de.Id y de.dDVId se setean en de.generalXml()
-			
-			if (edoc.getId() == null) {
-				edoc.setIdDocumentoOriginal(idDocumento);
-				edoc.setTipoDocumento("NC");
-				edoc.setNroDocumento(String.format("%7s", nc.getNroNc().trim()).replace(' ', '0'));
-				edoc.setEstablecimiento(nc.getEstablecimiento());
-				edoc.setPuntoExp(nc.getPuntoExp());
-				edoc.setFechaEmision(nc.getNotaFechahora());
-				edoc.setEnviado("NO");
-	        }
-			
-			//TgOpeDE
-			de.setgOpeDE(new TgOpeDE());//dCodSeg se genera en este constructor			
-			de.getgOpeDE().setiTipEmi(TTipEmi.NORMAL);
-			//de.getgOpeDE().setdInfoEmi("1");//
-			//de.getgOpeDE().setdInfoFisc("Información de interés del Fisco respecto al DE");
-			
-			//TgTimb
-			de.setgTimb(new TgTimb());
-			de.getgTimb().setiTiDE(TTiDE.NOTA_DE_CREDITO_ELECTRONICA);			
-			de.getgTimb().setdNumTim(nc.getNcredTimbrado());
-			String establecimiento = nc.getEstablecimiento();
-			//String establecimiento = "001";
-			String puntoExp = nc.getPuntoExp();
-			//String puntoExp = "001";
-			String nroComp = edoc.getNroDocumento();
-			de.getgTimb().setdEst(String.format("%" + 3 + "s", String.valueOf(establecimiento)).replace(' ', '0'));
-			de.getgTimb().setdPunExp(String.format("%" + 3 + "s", String.valueOf(puntoExp)).replace(' ', '0'));
-			de.getgTimb().setdNumDoc(String.format("%" + 7 + "s", String.valueOf(nroComp.trim())).replace(' ', '0'));
-			de.getgTimb().setdFeIniT(nc.getdFeIniT());			
-			//TdDatGralOpe
-			de.setgDatGralOpe(new TdDatGralOpe());
-			//Date fechaEmision = docs.getAutoFactura().getdFeEmiDE();	//Descomentar cuando se obtenga la fecha de la factura	
-			LocalDateTime fechaEmision = nc.getNotaFechahora();	
-			de.getgDatGralOpe().setdFeEmiDE(fechaEmision);
-			de.getgDatGralOpe().setgOpeCom(new TgOpeCom());
-			de.getgDatGralOpe().getgOpeCom().setiTipTra(TTipTra.PRESTACION_SERVICIOS);
-			de.getgDatGralOpe().getgOpeCom().setiTImp(TTImp.IVA);
-			de.getgDatGralOpe().getgOpeCom().setcMoneOpe(CMondT.PYG);
-			
-			//TdDatGralOpe.TgEmis
-			de.getgDatGralOpe().setgEmis(new TgEmis());
-			de.getgDatGralOpe().getgEmis().setdRucEm("80156217");		
-			de.getgDatGralOpe().getgEmis().setdDVEmi("1");
-			de.getgDatGralOpe().getgEmis().setiTipCont(TiTipCont.PERSONA_JURIDICA);
-			de.getgDatGralOpe().getgEmis().setcTipReg(TTipReg.REGIMEN_CONTABLE);			
-			de.getgDatGralOpe().getgEmis().setdNomEmi("INSTITUTO TECNICO SUPERIOR INTERCONTINENTAL");	
-			de.getgDatGralOpe().getgEmis().setdDirEmi(nc.getSedDirecc());
-			de.getgDatGralOpe().getgEmis().setdNumCas("0");
-			//MIENTRAS ESTE EN MODO DE PRUEBAS SE DEBE ESPECIFICAR QUE NO TIENE VALOR FISCAL
-//			de.getgDatGralOpe().getgEmis().setdNomEmi("INSTITUTO TECNICO SUPERIOR INTERCONTINENTAL - DOCUMENTO ELECTRÓNICO SIN VALOR COMERCIAL NI FISCAL - GENERADO EN AMBIENTE DE PRUEBA");
-//			
-			
-			de.getgDatGralOpe().getgEmis().setdDirEmi(nc.getSedDirecc());			
-			//de.getgDatGralOpe().getgEmis().setdNumCas("0");			
-			// departamento y ciudad de emision por establecimiento
-			de.getgDatGralOpe().getgEmis().setcDepEmi(TDepartamento.getByVal((short)nc.getIdDepartamentoSede()));
-			de.getgDatGralOpe().getgEmis().setcCiuEmi(nc.getIdCiudadSede());
-			de.getgDatGralOpe().getgEmis().setdDesCiuEmi(nc.getCiudadSede());			
-			de.getgDatGralOpe().getgEmis().setdTelEmi(nc.getSedTel());	
-			de.getgDatGralOpe().getgEmis().setdEmailE("contabutic.2017@gmail.com");				
-			
-			de.getgDatGralOpe().getgEmis().setgActEcoList(new ArrayList<TgActEco>());			
-			
-			TgActEco actEco = new TgActEco();	
-			actEco.setcActEco("85220");			
-			actEco.setdDesActEco("ENSEÑANZA SECUNDARIA DE FORMACIÓN TÉCNICA Y PROFESIONAL");	
-			de.getgDatGralOpe().getgEmis().getgActEcoList().add(actEco);
-			
-			//TdDatGralOpe.TgDatRec
-			de.getgDatGralOpe().setgDatRec(new TgDatRec());	
-			de.getgDatGralOpe().getgDatRec().setiNatRec(nc.getTipoDocPersona().equals("RUC")?TiNatRec.CONTRIBUYENTE:TiNatRec.NO_CONTRIBUYENTE);			
-			de.getgDatGralOpe().getgDatRec().setiTiOpe(TiTiOpe.B2C);
-			de.getgDatGralOpe().getgDatRec().setcPaisRec(PaisType.PRY);
-			de.getgDatGralOpe().getgDatRec().setdNomRec(nc.getaNombreDe());
-			
-			de.getgDatGralOpe().getgDatRec().setiTiContRec(TiTipCont.PERSONA_FISICA);
-			if(nc.getTipoDocPersona().equalsIgnoreCase("RUC") && 
-					Long.valueOf(nc.getRuc().substring(0, nc.getRuc().length()-2)) > 80000000){
-				de.getgDatGralOpe().getgDatRec().setiTiContRec(TiTipCont.PERSONA_JURIDICA);				
-			}
-			
-			if(nc.getTipoDocPersona().equalsIgnoreCase("RUC")){
-				//solo el tipo de documento es RUC se informa dRucRec y dDVRec
-				de.getgDatGralOpe().getgDatRec().setdRucRec(nc.getRuc().substring(0, nc.getRuc().length()-2));				
-				de.getgDatGralOpe().getgDatRec().setdDVRec((short)Integer.valueOf(nc.getRuc().substring(nc.getRuc().length()-1, nc.getRuc().length())).intValue());
-			}else{
-				//si tiene guion se debe eliminar
-				//de.getgDatGralOpe().getgDatRec().setdNumIDRec(nc.getRuc().replaceAll("-", ""));
-				de.getgDatGralOpe().getgDatRec().setdNumIDRec(nc.getRuc());
-				//solo cuando no es RUC se debe informar el Tipo de documento de identidad del receptor iTipIDRec
-				if(nc.getTipoDocPersona().equalsIgnoreCase("CI"))
-					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.CEDULA_PARAGUAYA);
-				else if(nc.getTipoDocPersona().equalsIgnoreCase("PAS"))
-					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.PASAPORTE);
-				else if(nc.getTipoDocPersona().equalsIgnoreCase("DIE"))
-					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.CEDULA_EXTRANJERA);
-				else if(nc.getTipoDocPersona().equalsIgnoreCase("INN"))
-					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.INNOMINADO);
-				else
-					de.getgDatGralOpe().getgDatRec().setiTipIDRec(TiTipDocRec.OTRO);
-				
-			}
-
-
-				
-						
-			//////////////////////////////////// DATOS DE NOTA DE CREDITO ////////////////////////////////////////////
-			de.setgCamDEAsocList(new ArrayList<TgCamDEAsoc> ());
-			String idOrig = "";
-			List<NotaCreditoDetalle> detalles = notaCreditoDetalleRepository.findByNotaCreditoId(nc.getId());
-			for(NotaCreditoDetalle dnc:detalles) {		
-				if(!dnc.getFactura().equals(idOrig)) {
-					TgCamDEAsoc factura = new TgCamDEAsoc();			
-					if(dnc.getCdcFactura() != null && !dnc.getCdcFactura().isEmpty()){
-						factura.setiTipDocAso(TiTipDocAso.ELECTRONICO);
-						factura.setdCdCDERef(detalles.get(0).getCdcFactura());
-					}else{
-						factura.setiTipDocAso(TiTipDocAso.IMPRESO);
-						factura.setdNTimDI("10976918");				
-						factura.setdEstDocAso(String.format("%" + 3 + "s", String.valueOf(dnc.getdEstDocAso())).replace(' ', '0'));
-						factura.setdPExpDocAso(String.format("%" + 3 + "s", String.valueOf(dnc.getdPExpDocAso())).replace(' ', '0'));				
-						factura.setdNumDocAso(String.format("%" + 7 + "s", String.valueOf(dnc.getdNumDocAso().trim())).replace(' ', '0'));					
-						factura.setiTipoDocAso(TiTIpoDoc.FACTURA);				
-						factura.setdFecEmiDI(dnc.getdFecEmiDI());
-					}	
-					de.getgCamDEAsocList().add(factura);	
-					idOrig = dnc.getFactura();
-				}
-			}
-			de.setgDtipDE(new TgDtipDE());	
-			de.getgDtipDE().setgCamNCDE(new TgCamNCDE());
-			
-			switch(nc.getMotivo()) {
-				case "DESCUENTO":
-					de.getgDtipDE().getgCamNCDE().setiMotEmi(TiMotEmi.DESCUENTO);	
-					break;
-				case "DESCUENTOS":
-					de.getgDtipDE().getgCamNCDE().setiMotEmi(TiMotEmi.DESCUENTO);	
-					break;
-				case "DEVOLUCIONES":
-					de.getgDtipDE().getgCamNCDE().setiMotEmi(TiMotEmi.DEVOLUCION);	
-					break;
-				default:
-					de.getgDtipDE().getgCamNCDE().setiMotEmi(TiMotEmi.AJUSTE_DE_PRECIO);	
-			}	
-			de.getgDtipDE().setgCamCond(new TgCamCond());
-			de.getgDtipDE().getgCamCond().setiCondOpe(TiCondOpe.CONTADO);
-			de.getgDtipDE().getgCamCond().setgPaConEIniList(new ArrayList<TgPaConEIni>());
-			TgPaConEIni formaPago = new TgPaConEIni();
-			formaPago.setiTiPago(TiTiPago.PAGO_ELECTRONICO);
-			formaPago.setdMonTiPag(new BigDecimal(nc.getTotal()));
-			formaPago.setcMoneTiPag(CMondT.PYG);
-			de.getgDtipDE().getgCamCond().getgPaConEIniList().add(formaPago);
-			
-			//DE.TgDtipDE.gCamItem
-			de.getgDtipDE().setgCamItemList(new ArrayList<TgCamItem>());
-			TgCamItem item;
-			TgValorItem val;
-			TgCamIVA iva;	
-			
-			List<NotaCreditoDetalle> detNC = new ArrayList<NotaCreditoDetalle>();
-			List<NotaCreditoDetalle> detNCDtos = new ArrayList<NotaCreditoDetalle>();
-			for (NotaCreditoDetalle det: detalles) {
-				if (det.getMonto() < 0) {
-					detNCDtos.add(det);
-				} else {
-					detNC.add(det);
-				}
-			}
-			
-			int afecIva;		
-			for(NotaCreditoDetalle det: detNC){
-				item = new TgCamItem();
-				item.setdCodInt(det.getCodInt());
-				item.setdDesProSer(det.getDescriCta());	
-				item.setcUniMed(TcUniMed.UNI);
-				item.setdCantProSer(new BigDecimal(det.getCantidad()));
-				
-				val = new TgValorItem();
-				val.setdPUniProSer(new BigDecimal(det.getMonto()));					
-				if(det.getExenta() > 0)
-					afecIva = 3;				
-				else
-					afecIva = 1;
-				
-				iva = new TgCamIVA();
-				iva.setiAfecIVA(TiAfecIVA.getByVal((short)afecIva));				
-				iva.setdPropIVA((afecIva == 1) ? new BigDecimal(100) : BigDecimal.ZERO);	
-				iva.setdTasaIVA((afecIva == 1 ) ? (det.getIva5()>0?new BigDecimal(5):new BigDecimal(10)) : BigDecimal.ZERO);
-				iva.setdBasExe(null);
-				item.setgCamIVA(iva);
-				
-				val.setgValorRestaItem(new TgValorRestaItem());	
-				item.setgValorItem(val);
-				
-				
-				de.getgDtipDE().getgCamItemList().add(item);
-			}
-			de.setgTotSub(new TgTotSub());
-			
-			//TgTotSub esta parte ya hace todo solo el programa de generacion de xml
-			de.setgTotSub(new TgTotSub());	
-			
-			return de;
-		
-	} 
-    
-    
     /**
      * Genera el objeto DocumentoElectronico (NC) a partir de la vista NotaCreditoSifenView.
      * Cumple con Manual Técnico 150.
@@ -1119,7 +617,17 @@ public class SifenServiceImpl implements SifenService {
         short tipoTransaccion = view.getTipoOperacion() != null ? view.getTipoOperacion().shortValue() : 1;
         opeCom.setiTipTra(TTipTra.getByVal(tipoTransaccion));
         opeCom.setiTImp(TTImp.IVA);
-        opeCom.setcMoneOpe(CMondT.PYG);
+     // --- CAMBIO MULTIMONEDA INICIO ---
+        // Usamos la moneda que viene en la vista (debe coincidir con la factura original)
+        String moneda = view.getMoneda() != null ? view.getMoneda() : "PYG";
+        opeCom.setcMoneOpe(CMondT.getByName(moneda));
+
+        // Si no es Guaraníes, seteamos el Tipo de Cambio
+        if (!"PYG".equals(moneda) && view.getTipoCambio() != null) {
+             opeCom.setdTiCam(new BigDecimal(view.getTipoCambio()));
+             opeCom.setdCondTiCam(TdCondTiCam.GLOBAL); 
+        }
+        // --- CAMBIO MULTIMONEDA FIN ---
         de.getgDatGralOpe().setgOpeCom(opeCom);
 
         // B. Emisor (gEmis)
@@ -1144,13 +652,7 @@ public class SifenServiceImpl implements SifenService {
         emisor.setdTelEmi(view.getEmisorTelefono());
         emisor.setdEmailE(view.getEmisorEmail());
 
-        // Actividad Económica
-        List<TgActEco> actEcos = new ArrayList<>();
-        TgActEco act1 = new TgActEco();
-        act1.setcActEco("62020"); 
-        act1.setdDesActEco("ACTIVIDADES DE CONSULTORÍA Y GESTIÓN DE SERVICIOS INFORMÁTICOS");
-        actEcos.add(act1);
-        emisor.setgActEcoList(actEcos);
+        emisor.setgActEcoList(getActividadesEconomicas());
         de.getgDatGralOpe().setgEmis(emisor);
 
         // C. Receptor (gDatRec)
@@ -1350,19 +852,8 @@ public class SifenServiceImpl implements SifenService {
         emisor.setdTelEmi(view.getEmisorTelefono()); // Dato que faltaba en la vista, idealmente agregarlo
         emisor.setdEmailE(view.getEmisorEmail());
 
-        // Actividad Económica (Obligatorio)
-        List<TgActEco> actEcos = new ArrayList<>();
-        TgActEco act1 = new TgActEco();
-        act1.setcActEco("62020"); // Código genérico, ajustar
-        act1.setdDesActEco("ACTIVIDADES DE CONSULTORÍA Y GESTIÓN DE SERVICIOS INFORMÁTICOS");
-        actEcos.add(act1);
         
-        TgActEco act2 = new TgActEco();
-        act2.setcActEco("33200"); // Código genérico, ajustar
-        act2.setdDesActEco("INSTALACIÓN DE MÁQUINAS Y EQUIPOS");
-        actEcos.add(act2);
-        
-        emisor.setgActEcoList(actEcos);
+        emisor.setgActEcoList(getActividadesEconomicas());
         de.getgDatGralOpe().setgEmis(emisor);
 
         // --- 5. Receptor (gDatRec) ---
@@ -1772,6 +1263,41 @@ public class SifenServiceImpl implements SifenService {
 
         // 3. Retornar el DTO compuesto
         return new DocumentoStatusDTO(edoc, errores);
+    }
+    
+    public List<TgActEco> getActividadesEconomicas() {
+    	List<TgActEco> actEcos = new ArrayList<>();
+        TgActEco act1 = new TgActEco();
+        act1.setcActEco("62020"); // Código genérico, ajustar
+        act1.setdDesActEco("ACTIVIDADES DE CONSULTORÍA Y GESTIÓN DE SERVICIOS INFORMÁTICOS");
+        actEcos.add(act1);
+        
+        TgActEco act2 = new TgActEco();
+        act2.setcActEco("33200"); // Código genérico, ajustar
+        act2.setdDesActEco("INSTALACIÓN DE MÁQUINAS Y EQUIPOS");
+        actEcos.add(act2);
+        
+        TgActEco act3 = new TgActEco();
+        act3.setcActEco("43210"); // Código genérico, ajustar
+        act3.setdDesActEco("INSTALACIONES ELÉCTRICAS, ELECTROMECÁNICAS Y ELECTRÓNICAS");
+        actEcos.add(act3);
+        
+        TgActEco act4 = new TgActEco();
+        act4.setcActEco("80000"); // Código genérico, ajustar
+        act4.setdDesActEco("ACTIVIDADES DE INVESTIGACIÓN Y SEGURIDAD");
+        actEcos.add(act4);
+        
+        TgActEco act5 = new TgActEco();
+        act5.setcActEco("61001"); // Código genérico, ajustar
+        act5.setdDesActEco("TELECOMUNICACIONES");
+        actEcos.add(act5);
+        
+        TgActEco act6 = new TgActEco();
+        act6.setcActEco("46510"); // Código genérico, ajustar
+        act6.setdDesActEco("COMERCIO AL POR MAYOR DE EQUIPOS INFORMÁTICOS Y SOFTWARE");
+        actEcos.add(act6);
+        
+        return actEcos;
     }
     
 }

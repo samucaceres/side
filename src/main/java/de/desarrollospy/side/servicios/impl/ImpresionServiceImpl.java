@@ -7,6 +7,7 @@ import com.google.zxing.qrcode.QRCodeWriter;
 import com.lowagie.text.*;
 import com.lowagie.text.pdf.*;
 import com.roshka.sifen.core.beans.DocumentoElectronico;
+import com.roshka.sifen.core.fields.request.de.TgActEco;
 import com.roshka.sifen.core.fields.request.de.TgCamItem;
 import com.roshka.sifen.core.fields.request.de.TgCamNRE;
 import com.roshka.sifen.core.fields.request.de.TgCamTrans;
@@ -15,14 +16,9 @@ import com.roshka.sifen.core.fields.request.de.TgEmis;
 import com.roshka.sifen.core.fields.request.de.TgTransp;
 import com.roshka.sifen.core.fields.request.de.TgVehTras;
 import com.roshka.sifen.internal.response.SifenObjectFactory;
-import de.desarrollospy.side.modelo.Cobro;
-import de.desarrollospy.side.modelo.DetalleCobro;
 import de.desarrollospy.side.modelo.EDoc;
-import de.desarrollospy.side.repository.CobroRepository;
-import de.desarrollospy.side.repository.DetalleCobroRepository;
 import de.desarrollospy.side.repository.EDocRepository;
 import de.desarrollospy.side.servicios.ImpresionService;
-import de.desarrollospy.side.utils.NumberToLetterConverter;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.w3c.dom.Node;
@@ -42,37 +38,24 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Base64;
-import java.util.List;
 import java.util.Locale;
 
-import de.desarrollospy.side.modelo.NotaCredito;
-import de.desarrollospy.side.modelo.NotaCreditoDetalle;
-import de.desarrollospy.side.repository.NotaCreditoRepository;
-import de.desarrollospy.side.repository.NotaCreditoDetalleRepository;
 
 @Service
 public class ImpresionServiceImpl implements ImpresionService {
 
     @Autowired
     private EDocRepository eDocRepository;
-    @Autowired
-    private CobroRepository cobroRepository;
-    @Autowired
-    private DetalleCobroRepository detalleCobroRepository;
     
-    @Autowired
-    private NotaCreditoRepository notaCreditoRepository;
-    @Autowired
-    private NotaCreditoDetalleRepository notaCreditoDetalleRepository;
 
- // --- FUENTES ---
+    // --- FUENTES ---
     private static final Font FONT_TITLE = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12);
     private static final Font FONT_BOLD = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 8);
     private static final Font FONT_NORMAL = FontFactory.getFont(FontFactory.HELVETICA, 8);
     private static final Font FONT_SMALL = FontFactory.getFont(FontFactory.HELVETICA, 6);
     private static final Font FONT_SMALL_BOLD = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 6);
     
- // Fuentes específicas para el Pie de Página
+    // Fuentes específicas para el Pie de Página
     private static final Font FONT_FOOTER_NORMAL = FontFactory.getFont(FontFactory.HELVETICA, 7);
     private static final Font FONT_FOOTER_BOLD = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 7);
     private static final Font FONT_CDC = FontFactory.getFont(FontFactory.COURIER_BOLD, 9);
@@ -105,7 +88,7 @@ public class ImpresionServiceImpl implements ImpresionService {
         // 4. Generar Contenido según Tipo
         if ("NR".equalsIgnoreCase(tipoDocumento) || "REM".equalsIgnoreCase(tipoDocumento)) {
             generarCuerpoRemision(document, de);
-        }else if ("NC".equalsIgnoreCase(tipoDocumento) || "NCE".equalsIgnoreCase(tipoDocumento)) {
+        } else if ("NC".equalsIgnoreCase(tipoDocumento) || "NCE".equalsIgnoreCase(tipoDocumento)) {
             // NUEVO: Llamada para Nota de Crédito
             generarCuerpoNotaCredito(document, de);
         } else {
@@ -188,8 +171,7 @@ public class ImpresionServiceImpl implements ImpresionService {
         addLabelValue(tDetTras, "Punto de Partida:", dirSalida);
         addLabelValue(tDetTras, "Punto de Llegada:", dirEntrega);
         
-        if (nre.getdKmR() > 0) { // Validamos que sea mayor a 0
-            // Usamos String.valueOf porque los primitivos no tienen método .toString()
+        if (nre.getdKmR() > 0) { 
             addLabelValue(tDetTras, "Kms Estimados:", String.valueOf(nre.getdKmR())); 
             addLabelValue(tDetTras, "", "");
         }
@@ -199,7 +181,6 @@ public class ImpresionServiceImpl implements ImpresionService {
         doc.add(tTras);
 
         // --- 3. DATOS DEL VEHICULO Y CONDUCTOR ---
-        // SIFEN: gVehTras (Vehículo) y gCamTrans (Conductor/Transportista)
         
         PdfPTable tVeh = new PdfPTable(1);
         tVeh.setWidthPercentage(100);
@@ -264,7 +245,7 @@ public class ImpresionServiceImpl implements ImpresionService {
         
         for (TgCamItem item : de.getgDtipDE().getgCamItemList()) {
             addCellDataCenter(tItems, item.getdCantProSer().toString());
-            addCellDataCenter(tItems, item.getcUniMed().getAbreviatura()); // Podrías mapear a descripción
+            addCellDataCenter(tItems, item.getcUniMed().getAbreviatura()); 
             addCellDataLeft(tItems, item.getdDesProSer());
         }
         
@@ -298,13 +279,31 @@ public class ImpresionServiceImpl implements ImpresionService {
         String condicion = "Contado";
         if (de.getgDtipDE().getgCamCond().getiCondOpe().getVal() == 2) {
             condicion = "Crédito"; 
-            // Si hay info de cuotas
             if (de.getgDtipDE().getgCamCond().getgPagCred() != null) {
                 condicion += " (" + de.getgDtipDE().getgCamCond().getgPagCred().getdPlazoCre() + ")";
             }
         }
         addLabelValueSimple(tIzq, "Condición:", condicion);
-        addLabelValueSimple(tIzq, "Moneda:", de.getgDatGralOpe().getgOpeCom().getcMoneOpe().name());
+        
+        // --- CAMBIO: Moneda y Tipo de Cambio ---
+        String moneda = de.getgDatGralOpe().getgOpeCom().getcMoneOpe().name();
+        boolean isGuarani = "PYG".equals(moneda);
+        
+        // Configuramos el formateador según la moneda
+        DecimalFormat df = getDecimalFormatter(isGuarani);
+        DecimalFormat dfGs = getDecimalFormatter(true); // Para total en Guaraníes siempre sin decimales
+        
+        String txtMoneda = "Moneda: " + moneda;
+        BigDecimal tipoCambio = BigDecimal.ONE; 
+        
+        if (!isGuarani) {
+            if (de.getgDatGralOpe().getgOpeCom().getdTiCam() != null) {
+                tipoCambio = de.getgDatGralOpe().getgOpeCom().getdTiCam();
+                // Mostramos el tipo de cambio con formato estándar (ej. 2 decimales para cotización si fuera necesario, o default)
+                txtMoneda += "    Tipo de Cambio: " + getDecimalFormatter(false).format(tipoCambio);
+            }
+        }
+        addLabelValueSimple(tIzq, "", txtMoneda); 
         
         // Derecha (Cliente)
         PdfPTable tDer = new PdfPTable(1);
@@ -323,177 +322,7 @@ public class ImpresionServiceImpl implements ImpresionService {
         tInfo.addCell(cInfo);
         doc.add(tInfo);
 
-     // --- TABLA DE ITEMS (AJUSTADA AL FORMATO DE LA IMAGEN) ---
-        // Columnas: Cod | Descripcion | UM | Cant | Precio | Descuento | Exenta | 5% | 10%
-        float[] cols = {0.8f, 3.5f, 0.8f, 0.8f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f}; 
-        PdfPTable tItems = new PdfPTable(cols);
-        tItems.setWidthPercentage(100);
-        tItems.setHeaderRows(1);
-        
-        // Encabezados exactos de la imagen
-        String[] headers = {"Cod", "Descripción", "U.M.", "Cant", "Precio Unit.", "Descuento", "Exentas", "5%", "10%"};
-        for(String h : headers) addHeaderCell(tItems, h);
-        
-        DecimalFormat df = getDecimalFormatter();
-        
-        for (TgCamItem item : de.getgDtipDE().getgCamItemList()) {
-            addCellDataCenter(tItems, item.getdCodInt()); // Cod
-            addCellDataLeft(tItems, item.getdDesProSer()); // Descripcion
-            addCellDataCenter(tItems, "UNI"); // U.M. (Hardcode UNI o extraer de cUniMed)
-            addCellDataCenter(tItems, item.getdCantProSer().toString()); // Cantidad
-            addCellDataRight(tItems, df.format(item.getgValorItem().getdPUniProSer())); // Precio Unitario
-            
-            // Descuento
-            BigDecimal descuento = BigDecimal.ZERO;
-            if (item.getgValorItem().getgValorRestaItem() != null && item.getgValorItem().getgValorRestaItem().getdDescItem() != null) {
-                descuento = item.getgValorItem().getgValorRestaItem().getdDescItem();
-            }
-            addCellDataRight(tItems, df.format(descuento)); // Descuento
-            
-            // Calculo del Total Item (Precio * Cant - Desc)
-            BigDecimal totalItem = item.getgValorItem().getdPUniProSer().multiply(item.getdCantProSer()).subtract(descuento);
-            // Fallback si el SDK ya calculó dTotOpeItem
-            if (item.getgValorItem().getgValorRestaItem() != null && item.getgValorItem().getgValorRestaItem().getdTotOpeItem() != null) {
-                 totalItem = item.getgValorItem().getgValorRestaItem().getdTotOpeItem();
-            }
-
-            int tasa = item.getgCamIVA().getdTasaIVA().intValue();
-            
-            // Columnas de Impuestos (Exentas, 5%, 10%)
-            if (tasa == 5) {
-                addCellDataRight(tItems, "0"); // Exenta
-                addCellDataRight(tItems, df.format(totalItem)); // 5%
-                addCellDataRight(tItems, "0"); // 10%
-            } else if (tasa == 10) {
-                addCellDataRight(tItems, "0"); // Exenta
-                addCellDataRight(tItems, "0"); // 5%
-                addCellDataRight(tItems, df.format(totalItem)); // 10%
-            } else { // Exenta
-                addCellDataRight(tItems, df.format(totalItem)); // Exenta
-                addCellDataRight(tItems, "0"); // 5%
-                addCellDataRight(tItems, "0"); // 10%
-            }
-        }
-        
-        // --- TOTALES ---
-        // Fila Subtotales
-        PdfPCell cSub = new PdfPCell(new Phrase("SUBTOTAL:", FONT_BOLD)); // Texto exacto imagen
-        cSub.setColspan(6); // Ajustado para que empiece en columna Exentas
-        tItems.addCell(cSub);
-        
-        addCellDataRight(tItems, df.format(de.getgTotSub().getdSubExe()));
-        addCellDataRight(tItems, df.format(de.getgTotSub().getdSub5()));
-        addCellDataRight(tItems, df.format(de.getgTotSub().getdSub10()));
-        
-        // Fila Total Operación
-        PdfPCell cTotOp = new PdfPCell(new Phrase("TOTAL DE LA OPERACIÓN:", FONT_BOLD));
-        cTotOp.setColspan(8);
-        tItems.addCell(cTotOp);
-        
-        PdfPCell cTotOpVal = new PdfPCell(new Phrase(df.format(de.getgTotSub().getdTotOpe()), FONT_BOLD));
-        cTotOpVal.setHorizontalAlignment(Element.ALIGN_RIGHT);
-        tItems.addCell(cTotOpVal);
-        
-        // Fila Total Guaraníes
-        PdfPCell cTotGs = new PdfPCell(new Phrase("TOTAL EN GUARANÍES:", FONT_BOLD));
-        cTotGs.setColspan(8);
-        tItems.addCell(cTotGs);
-        
-        PdfPCell cTotGsVal = new PdfPCell(new Phrase(df.format(de.getgTotSub().getdTotOpe()), FONT_BOLD));
-        cTotGsVal.setHorizontalAlignment(Element.ALIGN_RIGHT);
-        tItems.addCell(cTotGsVal);
-        
-        doc.add(tItems);
-        
-        // Liquidación IVA
-        PdfPTable tLiq = new PdfPTable(1);
-        tLiq.setWidthPercentage(100);
-        // tLiq.setSpacingBefore(0); // Pegado a la tabla
-        
-        PdfPCell cLiq = new PdfPCell();
-        cLiq.setPadding(3);
-        cLiq.setBorder(Rectangle.BOX);
-        
-        // Según imagen: LIQUIDACIÓN IVA: (5%) XXXXXX (10%) XXXXXX TOTAL IVA: XXXXXX
-        String liqStr = String.format("LIQUIDACIÓN IVA:               (5%%) %s               (10%%) %s               TOTAL IVA: %s", 
-                df.format(de.getgTotSub().getdIVA5()),
-                df.format(de.getgTotSub().getdIVA10()),
-                df.format(de.getgTotSub().getdTotIVA()));
-        
-        Paragraph pLiq = new Paragraph(liqStr, FONT_NORMAL);
-        cLiq.addElement(pLiq);
-        
-        // Convertir numero a letras (Opcional, no sale en la imagen de la tabla pero es requisito legal a veces)
-        // String letras = NumberToLetterConverter.convertNumberToLetter(de.getgTotSub().getdTotOpe());
-        // cLiq.addElement(new Paragraph("TOTAL EN LETRAS: " + letras, FONT_SMALL));
-        
-        tLiq.addCell(cLiq);
-        doc.add(tLiq);
-    }
-    
- // ============================================================================================
-    // LÓGICA DE NOTA DE CRÉDITO (NC)
-    // ============================================================================================
-    private void generarCuerpoNotaCredito(Document doc, DocumentoElectronico de) throws DocumentException {
-        // --- CABECERA ---
-        agregarCabeceraKuDE(doc, de, "NOTA DE CRÉDITO ELECTRÓNICA");
-
-        // --- DATOS DE LA OPERACIÓN (CAJA 1) ---
-        PdfPTable tInfo = new PdfPTable(1);
-        tInfo.setWidthPercentage(100);
-        tInfo.setSpacingAfter(5);
-        PdfPCell cInfo = new PdfPCell();
-        cInfo.setBorder(Rectangle.BOX);
-        cInfo.setPadding(5);
-        
-        PdfPTable tDetInfo = new PdfPTable(2);
-        tDetInfo.setWidthPercentage(100);
-        tDetInfo.setWidths(new float[] {0.6f, 0.4f}); 
-        
-        // Columna Izquierda (Datos Operación)
-        PdfPTable tIzq = new PdfPTable(1);
-        addLabelValueSimple(tIzq, "Fecha de Emisión:", formatDateTime(de.getgDatGralOpe().getdFeEmiDE()));
-        
-        // Motivo de Emisión (NC)
-        if (de.getgDtipDE().getgCamNCDE() != null) {
-            String motivo = de.getgDtipDE().getgCamNCDE().getiMotEmi().getDescripcion();
-            addLabelValueSimple(tIzq, "Motivo:", motivo);
-        }
-        // Documento Asociado (Factura afectada)
-        if (de.getgCamDEAsocList() != null && !de.getgCamDEAsocList().isEmpty()) {
-            com.roshka.sifen.core.fields.request.de.TgCamDEAsoc asoc = de.getgCamDEAsocList().get(0);
-            if (asoc.getdCdCDERef() != null) {
-                // Si es electrónico, mostramos CDC
-                addLabelValueSimple(tIzq, "DE Asociado (CDC):", formatearCDC(asoc.getdCdCDERef()));
-            } else {
-                // Si es impreso/preimpreso
-                String nroAsoc = asoc.getdNumDocAso();
-                // Intentar formatear si viene plano: 001-001-0000123
-                // O mostrar timbrado
-                String infoAsoc = "Timbrado: " + asoc.getdNTimDI() + " Nro: " + nroAsoc;
-                addLabelValueSimple(tIzq, "Comprobante Asociado:", infoAsoc);
-            }
-        }
-        addLabelValueSimple(tIzq, "Moneda:", de.getgDatGralOpe().getgOpeCom().getcMoneOpe().name());
-        
-        // Columna Derecha (Datos Cliente)
-        PdfPTable tDer = new PdfPTable(1);
-        TgDatRec rec = de.getgDatGralOpe().getgDatRec();
-        String docRec = (rec.getdRucRec() != null) ? rec.getdRucRec() + "-" + rec.getdDVRec() : rec.getdNumIDRec();
-        
-        addLabelValueSimple(tDer, "RUC/CI:", docRec);
-        addLabelValueSimple(tDer, "Razón Social:", rec.getdNomRec());
-        addLabelValueSimple(tDer, "Dirección:", rec.getdDirRec() != null ? rec.getdDirRec() : "-");
-        
-        tDetInfo.addCell(createNoBorderCell(tIzq));
-        tDetInfo.addCell(createNoBorderCell(tDer));
-        
-        cInfo.addElement(tDetInfo);
-        tInfo.addCell(cInfo);
-        doc.add(tInfo);
-
-        // --- TABLA DE ITEMS (IDENTICA A FACTURA) ---
-        // Columnas: Cod | Descripcion | UM | Cant | Precio | Descuento | Exenta | 5% | 10%
+        // --- TABLA DE ITEMS ---
         float[] cols = {0.8f, 3.5f, 0.8f, 0.8f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f}; 
         PdfPTable tItems = new PdfPTable(cols);
         tItems.setWidthPercentage(100);
@@ -501,14 +330,14 @@ public class ImpresionServiceImpl implements ImpresionService {
         
         String[] headers = {"Cod", "Descripción", "U.M.", "Cant", "Precio Unit.", "Descuento", "Exentas", "5%", "10%"};
         for(String h : headers) addHeaderCell(tItems, h);
-        
-        DecimalFormat df = getDecimalFormatter();
         
         for (TgCamItem item : de.getgDtipDE().getgCamItemList()) {
             addCellDataCenter(tItems, item.getdCodInt()); // Cod
             addCellDataLeft(tItems, item.getdDesProSer()); // Descripcion
             addCellDataCenter(tItems, "UNI"); 
             addCellDataCenter(tItems, item.getdCantProSer().toString()); // Cantidad
+            
+            // Usamos df (con o sin decimales según moneda)
             addCellDataRight(tItems, df.format(item.getgValorItem().getdPUniProSer())); // Precio Unitario
             
             // Descuento
@@ -518,7 +347,7 @@ public class ImpresionServiceImpl implements ImpresionService {
             }
             addCellDataRight(tItems, df.format(descuento)); 
             
-            // Calculo Total Item
+            // Calculo del Total Item
             BigDecimal totalItem = item.getgValorItem().getdPUniProSer().multiply(item.getdCantProSer()).subtract(descuento);
             if (item.getgValorItem().getgValorRestaItem() != null && item.getgValorItem().getgValorRestaItem().getdTotOpeItem() != null) {
                  totalItem = item.getgValorItem().getgValorRestaItem().getdTotOpeItem();
@@ -526,18 +355,19 @@ public class ImpresionServiceImpl implements ImpresionService {
 
             int tasa = item.getgCamIVA().getdTasaIVA().intValue();
             
+            // Columnas de Impuestos
             if (tasa == 5) {
-                addCellDataRight(tItems, "0");
-                addCellDataRight(tItems, df.format(totalItem));
-                addCellDataRight(tItems, "0");
+                addCellDataRight(tItems, "0"); 
+                addCellDataRight(tItems, df.format(totalItem)); // 5%
+                addCellDataRight(tItems, "0"); 
             } else if (tasa == 10) {
-                addCellDataRight(tItems, "0");
-                addCellDataRight(tItems, "0");
-                addCellDataRight(tItems, df.format(totalItem));
+                addCellDataRight(tItems, "0"); 
+                addCellDataRight(tItems, "0"); 
+                addCellDataRight(tItems, df.format(totalItem)); // 10%
             } else { 
-                addCellDataRight(tItems, df.format(totalItem));
-                addCellDataRight(tItems, "0");
-                addCellDataRight(tItems, "0");
+                addCellDataRight(tItems, df.format(totalItem)); // Exenta
+                addCellDataRight(tItems, "0"); 
+                addCellDataRight(tItems, "0"); 
             }
         }
         
@@ -560,18 +390,210 @@ public class ImpresionServiceImpl implements ImpresionService {
         cTotOpVal.setHorizontalAlignment(Element.ALIGN_RIGHT);
         tItems.addCell(cTotOpVal);
         
-        // Fila Total Guaraníes
+        // --- CAMBIO: Cálculo de Total en Guaraníes ---
+        BigDecimal totalOperacion = de.getgTotSub().getdTotOpe();
+        BigDecimal totalGuaranies = totalOperacion; 
+
+        if (!isGuarani) {
+            // Si es moneda extranjera, multiplicamos por la cotización
+            totalGuaranies = totalOperacion.multiply(tipoCambio);
+        }
+
+        // Fila Total Guaraníes (Siempre dfGs -> sin decimales)
         PdfPCell cTotGs = new PdfPCell(new Phrase("TOTAL EN GUARANÍES:", FONT_BOLD));
         cTotGs.setColspan(8);
         tItems.addCell(cTotGs);
         
-        PdfPCell cTotGsVal = new PdfPCell(new Phrase(df.format(de.getgTotSub().getdTotOpe()), FONT_BOLD));
+        PdfPCell cTotGsVal = new PdfPCell(new Phrase(dfGs.format(totalGuaranies), FONT_BOLD));
         cTotGsVal.setHorizontalAlignment(Element.ALIGN_RIGHT);
         tItems.addCell(cTotGsVal);
         
         doc.add(tItems);
         
         // Liquidación IVA
+        PdfPTable tLiq = new PdfPTable(1);
+        tLiq.setWidthPercentage(100);
+        
+        PdfPCell cLiq = new PdfPCell();
+        cLiq.setPadding(3);
+        cLiq.setBorder(Rectangle.BOX);
+        
+        String liqStr = String.format("LIQUIDACIÓN IVA:               (5%%) %s               (10%%) %s               TOTAL IVA: %s", 
+                df.format(de.getgTotSub().getdIVA5()),
+                df.format(de.getgTotSub().getdIVA10()),
+                df.format(de.getgTotSub().getdTotIVA()));
+        
+        Paragraph pLiq = new Paragraph(liqStr, FONT_NORMAL);
+        cLiq.addElement(pLiq);
+        
+        tLiq.addCell(cLiq);
+        doc.add(tLiq);
+    }
+    
+ // ============================================================================================
+    // LÓGICA DE NOTA DE CRÉDITO (NC) - ACTUALIZADA MULTIMONEDA
+    // ============================================================================================
+    private void generarCuerpoNotaCredito(Document doc, DocumentoElectronico de) throws DocumentException {
+        // --- CABECERA ---
+        agregarCabeceraKuDE(doc, de, "NOTA DE CRÉDITO ELECTRÓNICA");
+
+        // --- DATOS DE LA OPERACIÓN ---
+        PdfPTable tInfo = new PdfPTable(1);
+        tInfo.setWidthPercentage(100);
+        tInfo.setSpacingAfter(5);
+        PdfPCell cInfo = new PdfPCell();
+        cInfo.setBorder(Rectangle.BOX);
+        cInfo.setPadding(5);
+        
+        PdfPTable tDetInfo = new PdfPTable(2);
+        tDetInfo.setWidthPercentage(100);
+        tDetInfo.setWidths(new float[] {0.6f, 0.4f}); 
+        
+        // Columna Izquierda (Datos Operación)
+        PdfPTable tIzq = new PdfPTable(1);
+        addLabelValueSimple(tIzq, "Fecha de Emisión:", formatDateTime(de.getgDatGralOpe().getdFeEmiDE()));
+        
+        // Motivo de Emisión (NC)
+        if (de.getgDtipDE().getgCamNCDE() != null) {
+            String motivo = de.getgDtipDE().getgCamNCDE().getiMotEmi().getDescripcion();
+            addLabelValueSimple(tIzq, "Motivo:", motivo);
+        }
+        // Documento Asociado
+        if (de.getgCamDEAsocList() != null && !de.getgCamDEAsocList().isEmpty()) {
+            com.roshka.sifen.core.fields.request.de.TgCamDEAsoc asoc = de.getgCamDEAsocList().get(0);
+            if (asoc.getdCdCDERef() != null) {
+                addLabelValueSimple(tIzq, "DE Asociado (CDC):", formatearCDC(asoc.getdCdCDERef()));
+            } else {
+                String nroAsoc = asoc.getdNumDocAso();
+                String infoAsoc = "Timbrado: " + asoc.getdNTimDI() + " Nro: " + nroAsoc;
+                addLabelValueSimple(tIzq, "Comprobante Asociado:", infoAsoc);
+            }
+        }
+        
+        // --- CAMBIO: Moneda y Tipo de Cambio en NC ---
+        String moneda = de.getgDatGralOpe().getgOpeCom().getcMoneOpe().name();
+        boolean isGuarani = "PYG".equals(moneda);
+        
+        // Configuramos el formateador según la moneda (true = sin decimales, false = 2 decimales)
+        DecimalFormat df = getDecimalFormatter(isGuarani);
+        DecimalFormat dfGs = getDecimalFormatter(true); // Para total en Guaraníes siempre sin decimales
+        
+        String txtMoneda = "Moneda: " + moneda;
+        BigDecimal tipoCambio = BigDecimal.ONE; 
+        
+        if (!isGuarani) {
+            if (de.getgDatGralOpe().getgOpeCom().getdTiCam() != null) {
+                tipoCambio = de.getgDatGralOpe().getgOpeCom().getdTiCam();
+                // Mostramos el tipo de cambio con formato de 2 decimales
+                txtMoneda += "    Tipo de Cambio: " + getDecimalFormatter(false).format(tipoCambio);
+            }
+        }
+        addLabelValueSimple(tIzq, "", txtMoneda);
+        
+        // Columna Derecha (Datos Cliente)
+        PdfPTable tDer = new PdfPTable(1);
+        TgDatRec rec = de.getgDatGralOpe().getgDatRec();
+        String docRec = (rec.getdRucRec() != null) ? rec.getdRucRec() + "-" + rec.getdDVRec() : rec.getdNumIDRec();
+        
+        addLabelValueSimple(tDer, "RUC/CI:", docRec);
+        addLabelValueSimple(tDer, "Razón Social:", rec.getdNomRec());
+        addLabelValueSimple(tDer, "Dirección:", rec.getdDirRec() != null ? rec.getdDirRec() : "-");
+        
+        tDetInfo.addCell(createNoBorderCell(tIzq));
+        tDetInfo.addCell(createNoBorderCell(tDer));
+        
+        cInfo.addElement(tDetInfo);
+        tInfo.addCell(cInfo);
+        doc.add(tInfo);
+
+        // --- TABLA DE ITEMS (NC) ---
+        float[] cols = {0.8f, 3.5f, 0.8f, 0.8f, 1.2f, 1.2f, 1.2f, 1.2f, 1.2f}; 
+        PdfPTable tItems = new PdfPTable(cols);
+        tItems.setWidthPercentage(100);
+        tItems.setHeaderRows(1);
+        
+        String[] headers = {"Cod", "Descripción", "U.M.", "Cant", "Precio Unit.", "Descuento", "Exentas", "5%", "10%"};
+        for(String h : headers) addHeaderCell(tItems, h);
+        
+        for (TgCamItem item : de.getgDtipDE().getgCamItemList()) {
+            addCellDataCenter(tItems, item.getdCodInt()); 
+            addCellDataLeft(tItems, item.getdDesProSer()); 
+            addCellDataCenter(tItems, "UNI"); 
+            addCellDataCenter(tItems, item.getdCantProSer().toString()); 
+            
+            // Usamos df (con o sin decimales según moneda)
+            addCellDataRight(tItems, df.format(item.getgValorItem().getdPUniProSer())); 
+            
+            BigDecimal descuento = BigDecimal.ZERO;
+            if (item.getgValorItem().getgValorRestaItem() != null && item.getgValorItem().getgValorRestaItem().getdDescItem() != null) {
+                descuento = item.getgValorItem().getgValorRestaItem().getdDescItem();
+            }
+            addCellDataRight(tItems, df.format(descuento)); 
+            
+            // Cálculo del total por ítem (usando el valor ya calculado por SIFEN o manual)
+            BigDecimal totalItem = item.getgValorItem().getdPUniProSer().multiply(item.getdCantProSer()).subtract(descuento);
+            if (item.getgValorItem().getgValorRestaItem() != null && item.getgValorItem().getgValorRestaItem().getdTotOpeItem() != null) {
+                 totalItem = item.getgValorItem().getgValorRestaItem().getdTotOpeItem();
+            }
+
+            int tasa = item.getgCamIVA().getdTasaIVA().intValue();
+            
+            // Columnas de Impuestos formateadas
+            if (tasa == 5) {
+                addCellDataRight(tItems, "0");
+                addCellDataRight(tItems, df.format(totalItem));
+                addCellDataRight(tItems, "0");
+            } else if (tasa == 10) {
+                addCellDataRight(tItems, "0");
+                addCellDataRight(tItems, "0");
+                addCellDataRight(tItems, df.format(totalItem));
+            } else { 
+                addCellDataRight(tItems, df.format(totalItem));
+                addCellDataRight(tItems, "0");
+                addCellDataRight(tItems, "0");
+            }
+        }
+        
+        // --- TOTALES (NC) ---
+        // Fila Subtotales
+        PdfPCell cSub = new PdfPCell(new Phrase("SUBTOTAL:", FONT_BOLD)); 
+        cSub.setColspan(6); 
+        tItems.addCell(cSub);
+        
+        addCellDataRight(tItems, df.format(de.getgTotSub().getdSubExe()));
+        addCellDataRight(tItems, df.format(de.getgTotSub().getdSub5()));
+        addCellDataRight(tItems, df.format(de.getgTotSub().getdSub10()));
+        
+        // Fila Total Operación
+        PdfPCell cTotOp = new PdfPCell(new Phrase("TOTAL DE LA OPERACIÓN:", FONT_BOLD));
+        cTotOp.setColspan(8);
+        tItems.addCell(cTotOp);
+        
+        PdfPCell cTotOpVal = new PdfPCell(new Phrase(df.format(de.getgTotSub().getdTotOpe()), FONT_BOLD));
+        cTotOpVal.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        tItems.addCell(cTotOpVal);
+        
+        // --- Cálculo Total Guaraníes (NC) ---
+        BigDecimal totalOperacion = de.getgTotSub().getdTotOpe();
+        BigDecimal totalGuaranies = totalOperacion; 
+
+        if (!isGuarani) {
+            // Si es moneda extranjera, multiplicamos por la cotización
+            totalGuaranies = totalOperacion.multiply(tipoCambio);
+        }
+
+        // Fila Total Guaraníes (Siempre dfGs -> sin decimales)
+        PdfPCell cTotGs = new PdfPCell(new Phrase("TOTAL EN GUARANÍES:", FONT_BOLD));
+        cTotGs.setColspan(8);
+        tItems.addCell(cTotGs);
+        
+        PdfPCell cTotGsVal = new PdfPCell(new Phrase(dfGs.format(totalGuaranies), FONT_BOLD));
+        cTotGsVal.setHorizontalAlignment(Element.ALIGN_RIGHT);
+        tItems.addCell(cTotGsVal);
+        
+        doc.add(tItems);
+        
+        // Liquidación IVA (NC) - Formateada
         PdfPTable tLiq = new PdfPTable(1);
         tLiq.setWidthPercentage(100);
         
@@ -605,7 +627,6 @@ public class ImpresionServiceImpl implements ImpresionService {
         cellLogo.setBorder(Rectangle.BOX);
         cellLogo.setVerticalAlignment(Element.ALIGN_MIDDLE);
         try {
-            // Cargar logo desde resources (src/main/resources/img/logo.png)
             Image logo = Image.getInstance(getClass().getResource("/img/logo.png")); 
             logo.scaleToFit(120, 120);
             logo.setAlignment(Element.ALIGN_CENTER);
@@ -621,12 +642,21 @@ public class ImpresionServiceImpl implements ImpresionService {
         TgEmis emisor = de.getgDatGralOpe().getgEmis();
         
         Paragraph pEmi = new Paragraph();
+        pEmi.setLeading(9);
         pEmi.setAlignment(Element.ALIGN_CENTER);
         pEmi.add(new Chunk(emisor.getdNomEmi() + "\n", FONT_TITLE));
-        // Actividad
+        
+        // --- CAMBIO: Espaciado reducido para Actividades Económicas ---
         if (emisor.getgActEcoList() != null && !emisor.getgActEcoList().isEmpty()) {
-             pEmi.add(new Chunk(emisor.getgActEcoList().get(0).getdDesActEco() + "\n", FONT_SMALL));
+            for (TgActEco act : emisor.getgActEcoList()) {
+                Paragraph pAct = new Paragraph();
+                pAct.setLeading(6); // Espacio entre líneas reducido
+                pAct.setAlignment(Element.ALIGN_CENTER);
+                pAct.add(new Chunk(act.getdDesActEco(), FONT_SMALL));
+                pEmi.add(pAct);
+            }
         }
+        
         pEmi.add(new Chunk("Dirección: " + emisor.getdDirEmi() + "\n", FONT_SMALL));
         pEmi.add(new Chunk(emisor.getdDesCiuEmi() + " - Paraguay\n", FONT_SMALL));
         pEmi.add(new Chunk("Tel: " + emisor.getdTelEmi(), FONT_SMALL));
@@ -676,21 +706,16 @@ public class ImpresionServiceImpl implements ImpresionService {
         PdfPTable table = new PdfPTable(2);
         table.setWidthPercentage(100);
         table.setWidths(new float[]{0.18f, 0.82f}); // 18% QR, 82% Texto
-        table.setSpacingBefore(10); // Separación con el contenido de arriba
+        table.setSpacingBefore(10); 
         
-        // Borde exterior del pie de página (Opcional, según diseño. Aquí usamos borde en celdas)
-        
-     // --- COLUMNA 1: QR ---
+        // --- COLUMNA 1: QR ---
         PdfPCell cQr = new PdfPCell();
         cQr.setBorder(Rectangle.BOX);
         cQr.setVerticalAlignment(Element.ALIGN_MIDDLE);
         cQr.setHorizontalAlignment(Element.ALIGN_CENTER);
         
-        // AJUSTE 1: Padding mínimo para que ocupe toda la celda
         cQr.setPadding(1); 
         
-        // cQr.setMinimumHeight(60); // Opcional: Remover si quieres que la altura la dicte la imagen
-
         try {
             if (qrData != null && !qrData.isEmpty()) {
                 QRCodeWriter qrWriter = new QRCodeWriter();
@@ -700,7 +725,6 @@ public class ImpresionServiceImpl implements ImpresionService {
                 MatrixToImageWriter.writeToStream(bitMatrix, "PNG", pngOut);
                 Image qrImg = Image.getInstance(pngOut.toByteArray());
                 
-                // AJUSTE 2: Escalar para llenar el ancho disponible de la columna (aprox 100pt)
                 qrImg.scaleToFit(100, 100); 
                 
                 cQr.addElement(qrImg);
@@ -715,7 +739,6 @@ public class ImpresionServiceImpl implements ImpresionService {
         cInfo.setBorder(Rectangle.BOX);
         cInfo.setPadding(6);
         
-        // Usamos una sub-tabla dentro de la celda derecha para organizar las filas (Instrucciones, CDC, Legal)
         PdfPTable tTextos = new PdfPTable(1);
         tTextos.setWidthPercentage(100);
         
@@ -725,10 +748,10 @@ public class ImpresionServiceImpl implements ImpresionService {
         cInstrucciones.setPaddingBottom(4);
         
         Paragraph pInstr = new Paragraph();
-        pInstr.setLeading(9); // Interlineado ajustado (más pegado)
+        pInstr.setLeading(9); 
         pInstr.add(new Chunk("Consulte la validez de esta Factura Electrónica con el número de CDC impreso abajo en:\n", FONT_FOOTER_NORMAL));
         Font fontLink = FontFactory.getFont(FontFactory.HELVETICA, 7, Font.NORMAL, Color.BLUE);
-        Chunk cLink = new Chunk("https://ekuatia.set.gov.py/consultas-test", fontLink);
+        Chunk cLink = new Chunk("https://ekuatia.set.gov.py/consultas", fontLink);
         pInstr.add(cLink);
         cInstrucciones.addElement(pInstr);
         tTextos.addCell(cInstrucciones);
@@ -736,7 +759,7 @@ public class ImpresionServiceImpl implements ImpresionService {
         // 2. Barra CDC (Fondo Gris)
         PdfPCell cCDC = new PdfPCell();
         cCDC.setBorder(Rectangle.NO_BORDER);
-        cCDC.setBackgroundColor(new Color(230, 230, 230)); // Gris claro como la imagen
+        cCDC.setBackgroundColor(new Color(230, 230, 230)); 
         cCDC.setPaddingTop(3);
         cCDC.setPaddingBottom(3);
         cCDC.setPaddingLeft(5);
@@ -744,37 +767,32 @@ public class ImpresionServiceImpl implements ImpresionService {
 
         String cdcFormateado = formatearCDC(de.getId());
         Paragraph pCDC = new Paragraph("CDC: " + cdcFormateado, FONT_CDC);
-        pCDC.setAlignment(Element.ALIGN_CENTER); // O Element.ALIGN_LEFT según preferencia
+        pCDC.setAlignment(Element.ALIGN_CENTER); 
         cCDC.addElement(pCDC);
         
-        // Espacio antes y después del CDC
         PdfPCell cSpacer = new PdfPCell(); 
         cSpacer.setBorder(Rectangle.NO_BORDER);
         cSpacer.setFixedHeight(3);
-        tTextos.addCell(cSpacer); // Espacio arriba
-        tTextos.addCell(cCDC);    // La barra gris
-        tTextos.addCell(cSpacer); // Espacio abajo
+        tTextos.addCell(cSpacer); 
+        tTextos.addCell(cCDC);    
+        tTextos.addCell(cSpacer); 
 
-        // 3. Leyenda Legal (Negrita y Normal)
+        // 3. Leyenda Legal
         PdfPCell cLegal = new PdfPCell();
         cLegal.setBorder(Rectangle.NO_BORDER);
         
         Paragraph pLegal = new Paragraph();
-        pLegal.setLeading(8); // Interlineado muy compacto para el texto legal
+        pLegal.setLeading(8); 
         
-        // Título en negrita
         pLegal.add(new Chunk("ESTE DOCUMENTO ES UNA REPRESENTACIÓN GRÁFICA DE UN DOCUMENTO ELECTRÓNICO (XML)\n", FONT_FOOTER_BOLD));
-        // Texto normal
         pLegal.add(new Chunk("Si su documento electrónico presenta algún error, podrá solicitar la modificación dentro de las 72 horas siguientes de la emisión de este comprobante.", FONT_FOOTER_NORMAL));
         
         cLegal.addElement(pLegal);
         tTextos.addCell(cLegal);
 
-        // Agregar la sub-tabla a la celda derecha principal
         cInfo.addElement(tTextos);
         table.addCell(cInfo);
 
-        // Agregar la tabla principal al documento
         doc.add(table);
     }
     
@@ -845,14 +863,24 @@ public class ImpresionServiceImpl implements ImpresionService {
         return cdc.replaceAll("(.{4})", "$1 ").trim();
     }
     
-    private DecimalFormat getDecimalFormatter() {
+    // Helper actualizado para soportar decimales dinámicos
+    private DecimalFormat getDecimalFormatter(boolean isGuarani) {
         DecimalFormatSymbols symbols = new DecimalFormatSymbols(new Locale("es", "PY"));
         symbols.setGroupingSeparator('.');
         symbols.setDecimalSeparator(',');
-        return new DecimalFormat("#,###", symbols);
+        if (isGuarani) {
+            return new DecimalFormat("#,###", symbols); // Sin decimales
+        } else {
+            return new DecimalFormat("#,###.00", symbols); // Con 2 decimales
+        }
+    }
+    
+    // Helper default para compatibilidad
+    private DecimalFormat getDecimalFormatter() {
+        return getDecimalFormatter(true); 
     }
 
-    // --- Métodos de Parseo XML (sin cambios mayores) ---
+    // --- Métodos de Parseo XML ---
     private org.w3c.dom.Document getDomDocument(byte[] xmlBytes) throws Exception {
         String xml = new String(Base64.getDecoder().decode(xmlBytes), StandardCharsets.UTF_8);
         xml = xml.replaceAll(">[\\s\r\n]*<", "><");

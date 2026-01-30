@@ -140,13 +140,33 @@ public class FacturaSifenView implements Serializable {
     
     @Column(name = "receptor_ciudad_id")
     private Integer receptorCiudadId;
+   
+    @Column(name = "moneda")
+    private String moneda;
+    
+    @Column(name = "tipo_cambio")
+    private Integer tipoCambio;
 
     // ==========================================
     // GETTERS Y SETTERS
     // ==========================================
+    
+    
 
     public Long getFacturaId() { return facturaId; }
-    public void setFacturaId(Long facturaId) { this.facturaId = facturaId; }
+    public String getMoneda() {
+		return moneda;
+	}
+	public void setMoneda(String moneda) {
+		this.moneda = moneda;
+	}
+	public Integer getTipoCambio() {
+		return tipoCambio;
+	}
+	public void setTipoCambio(Integer tipoCambio) {
+		this.tipoCambio = tipoCambio;
+	}
+	public void setFacturaId(Long facturaId) { this.facturaId = facturaId; }
 
     public Integer getNumeroDocumento() { return numeroDocumento; }
     public void setNumeroDocumento(Integer numeroDocumento) { this.numeroDocumento = numeroDocumento; }
@@ -275,8 +295,7 @@ public class FacturaSifenView implements Serializable {
 
         @JsonProperty("unidad_medida_cod")
         private Integer unidadMedidaCod;
-
-        // Getters y Setters
+		// Getters y Setters
         public Long getItemId() { return itemId; }
         public void setItemId(Long itemId) { this.itemId = itemId; }
 

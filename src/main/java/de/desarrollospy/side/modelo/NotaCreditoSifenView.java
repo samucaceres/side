@@ -137,6 +137,12 @@ public class NotaCreditoSifenView implements Serializable {
     @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "documento_asociado_json")
     private DocumentoAsociadoJson documentoAsociado;
+   
+    @Column(name = "moneda")
+    private String moneda;
+    
+    @Column(name = "tipo_cambio")
+    private Integer tipoCambio;
 
     // ==========================================
     // GETTERS Y SETTERS
@@ -247,11 +253,28 @@ public class NotaCreditoSifenView implements Serializable {
     public Integer getReceptorCiudadId() { return receptorCiudadId; }
     public void setReceptorCiudadId(Integer receptorCiudadId) { this.receptorCiudadId = receptorCiudadId; }
 
+    
+    
     // ==========================================
     // CLASES INTERNAS (DTOs para JSON)
     // ==========================================
 
-    /**
+    public String getMoneda() {
+		return moneda;
+	}
+	public void setMoneda(String moneda) {
+		this.moneda = moneda;
+	}
+	public Integer getTipoCambio() {
+		return tipoCambio;
+	}
+	public void setTipoCambio(Integer tipoCambio) {
+		this.tipoCambio = tipoCambio;
+	}
+
+
+
+	/**
      * Mapea cada ítem del array JSON 'detalles_json'
      */
     @JsonIgnoreProperties(ignoreUnknown = true) // ESTO ES CLAVE PARA EVITAR ERRORES FUTUROS
